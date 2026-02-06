@@ -226,6 +226,11 @@
     # TELEPORT ADMIN LOGIN AND BOT TOKEN GENERATION
     ############################################################################
     
+    - name: Install Python pip
+      ansible.builtin.dnf:
+        name: python3-pip
+        state: present
+    
     - name: Install pexpect for expect module
       ansible.builtin.pip:
         name: pexpect
