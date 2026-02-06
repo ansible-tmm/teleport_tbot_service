@@ -212,25 +212,18 @@
       changed_when: true
       failed_when: tsh_login_result.rc != 0
 
-    - name: Check if bot already exists
-      ansible.builtin.shell: |
-        {{ tctl_binary }} bots ls --format=json | grep -q "\"name\":\"{{ teleport_bot_name }}\""
-      register: bot_exists_check
-      failed_when: false
-      changed_when: false
-    
-    - name: Remove existing bot if it exists
+    - name: Remove existing bot if it exists (idempotent)
       ansible.builtin.command:
         cmd: "{{ tctl_binary }} bots rm {{ teleport_bot_name }}"
-      when: bot_exists_check.rc == 0
       register: bot_remove_result
       failed_when: false
+      changed_when: bot_remove_result.rc == 0
     
-    - name: Create bot and generate join token
+    - name: Create bot
       ansible.builtin.command:
         cmd: "{{ tctl_binary }} bots add {{ teleport_bot_name }} --roles=bot"
       register: bot_add_result
-      changed_when: true
+      changed_when: bot_add_result.rc == 0
       failed_when: bot_add_result.rc != 0
     
     - name: Generate new bot instance token
