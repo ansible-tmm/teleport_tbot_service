@@ -262,7 +262,7 @@
           version: v2
           
           # Teleport proxy connection
-          proxy_server: {{ teleport_proxy_addr }}
+          proxy_server: {{ teleport_proxy_addr if ':' in teleport_proxy_addr else teleport_proxy_addr ~ ':443' }}
           
           # Onboarding configuration - uses join token for machine ID
           onboarding:
@@ -311,9 +311,7 @@
 
           # Start the bot with explicit paths
           ExecStart={{ tbot_binary }} start \
-            --config={{ tbot_config_file }} \
-            --data-dir={{ tbot_data_dir }} \
-            --destination-dir={{ tbot_out_dir }}
+            --config={{ tbot_config_file }}
 
           # Restart policy with exponential backoff
           Restart=on-failure
