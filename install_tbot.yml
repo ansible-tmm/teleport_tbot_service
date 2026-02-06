@@ -121,7 +121,7 @@
     ############################################################################
     # TELEPORT INSTALLATION - Official Repository Method
     ############################################################################
-
+    
     - name: Add Teleport RPM repository
       ansible.builtin.yum_repository:
         name: teleport
@@ -131,21 +131,25 @@
         gpgkey: https://yum.releases.teleport.dev/gpg
         enabled: true
         state: present
-
+      register: teleport_repo
+      failed_when: false
+    
     - name: Install Teleport package
       ansible.builtin.dnf:
         name: "teleport-ent-{{ teleport_version }}"
         state: present
         update_cache: true
       register: teleport_install
+      failed_when: false
+      when: teleport_repo is succeeded
       # Note: Using teleport-ent; if you need OSS version, use "teleport"
       # If specific version not available, fallback will occur in next task
-
+    
     - name: Verify tbot binary exists
       ansible.builtin.stat:
         path: /usr/bin/tbot
       register: tbot_bin_stat
-
+    
     - name: Create symlinks for Teleport binaries if installed via package
       ansible.builtin.file:
         src: "/usr/bin/{{ item }}"
