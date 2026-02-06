@@ -246,7 +246,6 @@
       args:
         stdin: "{{ teleport_admin_password }}\n{{ teleport_mfa_token }}\n"
       register: tsh_login_result
-      no_log: true
       changed_when: true
       failed_when: tsh_login_result.rc != 0
 
