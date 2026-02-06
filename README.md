@@ -4,7 +4,37 @@ Ansible playbook to install and configure Teleport tbot (Machine ID) as a system
 
 ## Purpose
 
-Deploy Teleport tbot as a systemd service on RHEL9 execution nodes for Ansible Automation Platform. tbot will continuously maintain short-lived SSH certificates in an output directory for bind-mounting into Execution Environments.
+Deploy Teleport tbot as a systemd service on RHEL9 execution nodes for Ansible Automation Platform. tbot continuously maintains short-lived SSH certificates in an output directory for bind-mounting into Execution Environments.
+
+## Prerequisites
+
+### Teleport Administrator Must Complete (One-Time Setup)
+
+Before running this playbook, a Teleport administrator must:
+
+1. **Create an SSH access role** (e.g., `aap-ssh`) in Teleport with:
+   - SSH login permissions for target hosts
+   - Appropriate host labels and user mappings
+   - Node access configuration
+
+2. **Configure bot impersonation** - The bot role (auto-created as `bot-{bot_name}`) must allow impersonation of the access role:
+   ```yaml
+   kind: role
+   version: v7
+   metadata:
+     name: bot-aap-bot
+   spec:
+     allow:
+       impersonate:
+         roles:
+           - aap-ssh
+   ```
+
+**Why this matters:** Teleport uses a two-role model for bots:
+- **Bot role** (`bot-aap-bot`): Bot's authentication identity
+- **Access role** (`aap-ssh`): Permissions the bot impersonates for SSH access
+
+The playbook creates the bot automatically but **cannot** create roles or configure impersonation permissions.
 
 ## Usage
 
@@ -12,11 +42,11 @@ Deploy Teleport tbot as a systemd service on RHEL9 execution nodes for Ansible A
 ansible-playbook install_tbot.yml \
   -i inventory.ini \
   -e teleport_proxy_addr=sean-test.teleport.sh:443 \
-  -e teleport_bot_name=sean-test \
+  -e teleport_bot_name=aap-bot \
+  -e teleport_access_role=aap-ssh \
   -e teleport_admin_user=your-username \
   -e teleport_admin_password=your-password \
-  -e teleport_mfa_token=123456 \
-  [-e teleport_ca_pin=sha256:xxxxx]
+  -e teleport_mfa_token=123456
 ```
 
 ## Required Extra Variables
@@ -29,17 +59,10 @@ ansible-playbook install_tbot.yml \
 
 - `teleport_proxy_addr`: Teleport proxy address (default: `teleport.example.com:443`)
 - `teleport_bot_name`: Bot name for directory structure (default: `aap-bot`)
+- `teleport_access_role`: Role that bot impersonates for SSH access (default: `aap-ssh`)
 - `teleport_ca_pin`: CA pin for additional security (optional)
 - `teleport_version`: Version to install (default: `17.1.4`)
 - `teleport_arch`: Architecture (default: `amd64`)
-
-## Features
-
-- **Idempotent**: Safe to run multiple times across many nodes
-- **Secure**: Sensitive data handled with `no_log: true`
-- **SELinux**: Contexts set appropriately for RHEL9
-- **Systemd**: Production-ready service with restart policies
-- **Verification**: Comprehensive health checks and validation
 
 ## What It Does
 
@@ -48,24 +71,50 @@ ansible-playbook install_tbot.yml \
    - `/var/lib/teleport-bot/` (base)
    - `/var/lib/teleport-bot/{bot_name}/data` (tbot state)
    - `/var/lib/teleport-bot/{bot_name}/out` (SSH certificates)
-3. Installs Teleport binaries (tbot, tsh, tctl) from official repo (with tarball fallback)
+3. Installs Teleport binaries (tbot, tsh, tctl) from CDN tarball
 4. **Performs admin login** with username/password/MFA
 5. **Creates bot and generates join token automatically**
-6. Generates tbot YAML configuration with the captured token
+6. Generates tbot.yaml configured to:
+   - Authenticate as `bot-{bot_name}`
+   - Request impersonation of the access role
+   - Write SSH identity artifacts to output directory
 7. Creates and enables systemd service
 8. Verifies service is running and certificates are generated
 9. Cleans up admin session for security
+
+## How It Works (Teleport RBAC Model)
+
+1. **Bot authentication**: tbot authenticates as `bot-{bot_name}` (auto-created by Teleport)
+2. **Role impersonation**: tbot requests to impersonate `{access_role}` (e.g., `aap-ssh`)
+3. **Permission check**: Teleport verifies the bot role is allowed to impersonate the access role
+4. **Certificate generation**: Teleport issues short-lived SSH certificates with `{access_role}` permissions
+5. **File output**: Certificates are written to `/var/lib/teleport-bot/{bot_name}/out/`
+6. **Continuous renewal**: tbot automatically refreshes certificates before expiration
+
+**Key point:** Impersonation permissions are configured in Teleport RBAC, not in tbot.yaml or this playbook.
 
 ## Next Steps
 
 After running the playbook:
 
-1. Verify certificates: `ls -la /var/lib/teleport-bot/{bot_name}/out`
-2. Check logs: `journalctl -u tbot -f`
-3. Configure AAP to bind-mount the output directory into Execution Environments
-4. Use the SSH identity for connections to Teleport-protected hosts
+1. Verify certificates exist:
+   ```bash
+   sudo ls -la /var/lib/teleport-bot/{bot_name}/out/
+   ```
 
-Example SSH usage:
-```bash
-ssh -F /var/lib/teleport-bot/{bot_name}/out/ssh_config user@target-host
-```
+2. Check tbot service logs:
+   ```bash
+   sudo journalctl -u tbot -f
+   ```
+
+3. Test SSH access using the identity:
+   ```bash
+   sudo tsh \
+     --identity=/var/lib/teleport-bot/{bot_name}/out/identity \
+     --proxy={teleport_proxy_addr} \
+     ssh user@target-host
+   ```
+
+4. Configure AAP to bind-mount `/var/lib/teleport-bot/{bot_name}/out` into Execution Environments
+
+5. Use the SSH identity in Ansible playbooks for connections to Teleport-protected hosts
