@@ -17,8 +17,6 @@
     # System configuration
     tbot_user: "tbot"
     tbot_group: "tbot"
-    tbot_uid: 998  # System UID range
-    tbot_gid: 998  # System GID range
 
     # Directory structure
     tbot_base_dir: "/var/lib/teleport-bot"
@@ -62,14 +60,12 @@
     - name: Create tbot system group
       ansible.builtin.group:
         name: "{{ tbot_group }}"
-        gid: "{{ tbot_gid }}"
         system: true
         state: present
-
+    
     - name: Create tbot system user
       ansible.builtin.user:
         name: "{{ tbot_user }}"
-        uid: "{{ tbot_uid }}"
         group: "{{ tbot_group }}"
         system: true
         shell: /sbin/nologin
