@@ -165,24 +165,29 @@
     ############################################################################
     # FALLBACK: Manual Installation from Tarball (if repo fails)
     ############################################################################
-
+    
+    - name: Check if tbot binary exists in /usr/local/bin
+      ansible.builtin.stat:
+        path: "{{ tbot_binary }}"
+      register: tbot_local_bin_stat
+    
     - name: Download Teleport tarball (fallback method)
       ansible.builtin.get_url:
         url: "https://cdn.teleport.dev/teleport-v{{ teleport_version }}-linux-{{ teleport_arch }}-bin.tar.gz"
         dest: "/tmp/teleport-v{{ teleport_version }}.tar.gz"
         mode: '0644'
         timeout: 300
-      when: not tbot_bin_stat.stat.exists
+      when: not tbot_bin_stat.stat.exists and not tbot_local_bin_stat.stat.exists
       register: teleport_download
-
+    
     - name: Extract Teleport tarball
       ansible.builtin.unarchive:
         src: "/tmp/teleport-v{{ teleport_version }}.tar.gz"
         dest: /tmp
         remote_src: true
         creates: "/tmp/teleport/tbot"
-      when: teleport_download is changed
-
+      when: not tbot_bin_stat.stat.exists and not tbot_local_bin_stat.stat.exists
+    
     - name: Install Teleport binaries from tarball
       ansible.builtin.copy:
         src: "/tmp/teleport/{{ item }}"
@@ -195,8 +200,8 @@
         - tbot
         - tsh
         - tctl
-      when: teleport_download is changed
-
+      when: not tbot_bin_stat.stat.exists and not tbot_local_bin_stat.stat.exists
+    
     - name: Cleanup temporary files
       ansible.builtin.file:
         path: "{{ item }}"
@@ -220,12 +225,17 @@
     ############################################################################
     # TELEPORT ADMIN LOGIN AND BOT TOKEN GENERATION
     ############################################################################
-
+    
+    - name: Install pexpect for expect module
+      ansible.builtin.pip:
+        name: pexpect
+        state: present
+    
     - name: Clean up any existing tsh sessions
       ansible.builtin.file:
         path: "{{ tbot_temp_dir }}"
         state: absent
-
+    
     - name: Create temporary tsh directory
       ansible.builtin.file:
         path: "{{ tbot_temp_dir }}"
@@ -233,18 +243,15 @@
         owner: root
         group: root
         mode: '0700'
-
-    - name: Perform Teleport admin login with MFA
-      ansible.builtin.shell: |
-        echo "{{ teleport_mfa_token }}" | {{ tsh_binary }} login \
-          --proxy={{ teleport_proxy_addr }} \
-          --user={{ teleport_admin_user }} \
-          --auth=local
-      environment:
-        TELEPORT_LOGIN_USERNAME: "{{ teleport_admin_user }}"
-        TELEPORT_LOGIN_PASSWORD: "{{ teleport_admin_password }}"
-      args:
-        stdin: "{{ teleport_admin_password }}\n{{ teleport_mfa_token }}\n"
+    
+    - name: Perform Teleport admin login with MFA using expect
+      ansible.builtin.expect:
+        command: "{{ tsh_binary }} login --proxy={{ teleport_proxy_addr }} --user={{ teleport_admin_user }} --auth=local"
+        responses:
+          'Enter password for Teleport user': "{{ teleport_admin_password }}"
+          'Enter your OTP token': "{{ teleport_mfa_token }}"
+          'Enter an OTP code from a': "{{ teleport_mfa_token }}"
+        timeout: 60
       register: tsh_login_result
       changed_when: true
       failed_when: tsh_login_result.rc != 0
