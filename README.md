@@ -13,13 +13,17 @@ ansible-playbook install_tbot.yml \
   -i inventory.ini \
   -e teleport_proxy_addr=sean-test.teleport.sh:443 \
   -e teleport_bot_name=sean-test \
-  -e teleport_join_token=YOUR_SECRET_TOKEN \
+  -e teleport_admin_user=your-username \
+  -e teleport_admin_password=your-password \
+  -e teleport_mfa_token=123456 \
   [-e teleport_ca_pin=sha256:xxxxx]
 ```
 
 ## Required Extra Variables
 
-- `teleport_join_token`: The bot join token (REQUIRED, keep secret)
+- `teleport_admin_user`: Your Teleport admin username
+- `teleport_admin_password`: Your Teleport admin password (handled securely with no_log)
+- `teleport_mfa_token`: Your 6-digit MFA/TOTP code from authenticator app (handled securely with no_log)
 
 ## Optional Variables (with defaults)
 
@@ -44,10 +48,13 @@ ansible-playbook install_tbot.yml \
    - `/var/lib/teleport-bot/` (base)
    - `/var/lib/teleport-bot/{bot_name}/data` (tbot state)
    - `/var/lib/teleport-bot/{bot_name}/out` (SSH certificates)
-3. Installs Teleport/tbot binary from official repo (with tarball fallback)
-4. Generates tbot YAML configuration
-5. Creates and enables systemd service
-6. Verifies service is running and certificates are generated
+3. Installs Teleport binaries (tbot, tsh, tctl) from official repo (with tarball fallback)
+4. **Performs admin login** with username/password/MFA
+5. **Creates bot and generates join token automatically**
+6. Generates tbot YAML configuration with the captured token
+7. Creates and enables systemd service
+8. Verifies service is running and certificates are generated
+9. Cleans up admin session for security
 
 ## Next Steps
 
