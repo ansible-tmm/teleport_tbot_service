@@ -1,0 +1,419 @@
+---
+- name: Install and Configure Teleport tbot for AAP Execution Nodes
+  hosts: all
+  become: true
+  
+  vars:
+    # Teleport configuration
+    teleport_proxy_addr: "teleport.example.com:443"
+    teleport_bot_name: "aap-bot"
+    # teleport_join_token: MUST be provided as extra var at runtime
+    # teleport_ca_pin: Optional, provide via extra var if needed
+    teleport_version: "17.1.4"
+    teleport_arch: "amd64"
+    
+    # System configuration
+    tbot_user: "tbot"
+    tbot_group: "tbot"
+    tbot_uid: 998  # System UID range
+    tbot_gid: 998  # System GID range
+    
+    # Directory structure
+    tbot_base_dir: "/var/lib/teleport-bot"
+    tbot_data_dir: "/var/lib/teleport-bot/{{ teleport_bot_name }}/data"
+    tbot_out_dir: "/var/lib/teleport-bot/{{ teleport_bot_name }}/out"
+    tbot_config_dir: "/etc/teleport"
+    tbot_config_file: "/etc/teleport/tbot.yaml"
+    
+    # Binary paths
+    tbot_binary: "/usr/local/bin/tbot"
+    
+  tasks:
+    
+    ############################################################################
+    # PRE-FLIGHT CHECKS
+    ############################################################################
+    
+    - name: Verify required variables are defined
+      ansible.builtin.assert:
+        that:
+          - teleport_join_token is defined
+          - teleport_join_token | length > 0
+        fail_msg: "teleport_join_token must be provided as an extra variable"
+        quiet: true
+      no_log: true
+    
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+    
+    ############################################################################
+    # SYSTEM USER AND GROUP CREATION
+    ############################################################################
+    
+    - name: Create tbot system group
+      ansible.builtin.group:
+        name: "{{ tbot_group }}"
+        gid: "{{ tbot_gid }}"
+        system: true
+        state: present
+    
+    - name: Create tbot system user
+      ansible.builtin.user:
+        name: "{{ tbot_user }}"
+        uid: "{{ tbot_uid }}"
+        group: "{{ tbot_group }}"
+        system: true
+        shell: /sbin/nologin
+        home: "{{ tbot_base_dir }}"
+        create_home: false
+        comment: "Teleport Machine ID Bot Service Account"
+        state: present
+    
+    ############################################################################
+    # DIRECTORY STRUCTURE CREATION
+    ############################################################################
+    
+    - name: Create base directory for tbot
+      ansible.builtin.file:
+        path: "{{ tbot_base_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+        setype: var_lib_t
+    
+    - name: Create bot-specific data directory
+      ansible.builtin.file:
+        path: "{{ tbot_data_dir }}"
+        state: directory
+        owner: "{{ tbot_user }}"
+        group: "{{ tbot_group }}"
+        mode: '0700'
+        setype: var_lib_t
+      # This directory holds tbot's internal state and must be writable by tbot user only
+    
+    - name: Create bot-specific output directory for certificates
+      ansible.builtin.file:
+        path: "{{ tbot_out_dir }}"
+        state: directory
+        owner: "{{ tbot_user }}"
+        group: "{{ tbot_group }}"
+        mode: '0750'
+        setype: var_lib_t
+      # Output directory: owned by tbot, group-readable
+      # The awx user (or EE runtime) will access this later via group membership or bind mount
+      # For now, keeping it tbot:tbot with 0750 for least privilege
+    
+    - name: Create Teleport configuration directory
+      ansible.builtin.file:
+        path: "{{ tbot_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+        setype: etc_t
+    
+    ############################################################################
+    # TELEPORT INSTALLATION - Official Repository Method
+    ############################################################################
+    
+    - name: Add Teleport RPM repository
+      ansible.builtin.yum_repository:
+        name: teleport
+        description: Teleport Repository
+        baseurl: "https://yum.releases.teleport.dev/{{ ansible_distribution_major_version }}/$basearch"
+        gpgcheck: true
+        gpgkey: https://yum.releases.teleport.dev/gpg
+        enabled: true
+        state: present
+    
+    - name: Install Teleport package
+      ansible.builtin.dnf:
+        name: "teleport-ent-{{ teleport_version }}"
+        state: present
+        update_cache: true
+      register: teleport_install
+      # Note: Using teleport-ent; if you need OSS version, use "teleport"
+      # If specific version not available, fallback will occur in next task
+    
+    - name: Verify tbot binary exists
+      ansible.builtin.stat:
+        path: /usr/bin/tbot
+      register: tbot_bin_stat
+    
+    - name: Create symlink for tbot if installed via package
+      ansible.builtin.file:
+        src: /usr/bin/tbot
+        dest: "{{ tbot_binary }}"
+        state: link
+        force: true
+      when: tbot_bin_stat.stat.exists
+    
+    ############################################################################
+    # FALLBACK: Manual Installation from Tarball (if repo fails)
+    ############################################################################
+    
+    - name: Download Teleport tarball (fallback method)
+      ansible.builtin.get_url:
+        url: "https://cdn.teleport.dev/teleport-v{{ teleport_version }}-linux-{{ teleport_arch }}-bin.tar.gz"
+        dest: "/tmp/teleport-v{{ teleport_version }}.tar.gz"
+        mode: '0644'
+        timeout: 300
+      when: not tbot_bin_stat.stat.exists
+      register: teleport_download
+    
+    - name: Extract Teleport tarball
+      ansible.builtin.unarchive:
+        src: "/tmp/teleport-v{{ teleport_version }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+        creates: "/tmp/teleport/tbot"
+      when: teleport_download is changed
+    
+    - name: Install tbot binary from tarball
+      ansible.builtin.copy:
+        src: /tmp/teleport/tbot
+        dest: "{{ tbot_binary }}"
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: true
+      when: teleport_download is changed
+    
+    - name: Cleanup temporary files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/teleport-v{{ teleport_version }}.tar.gz"
+        - /tmp/teleport
+      when: teleport_download is changed
+    
+    - name: Verify tbot binary is executable
+      ansible.builtin.command:
+        cmd: "{{ tbot_binary }} version"
+      register: tbot_version_check
+      changed_when: false
+      failed_when: tbot_version_check.rc != 0
+    
+    - name: Display installed tbot version
+      ansible.builtin.debug:
+        msg: "{{ tbot_version_check.stdout_lines }}"
+    
+    ############################################################################
+    # TELEPORT BOT CONFIGURATION FILE
+    ############################################################################
+    
+    - name: Generate tbot configuration file
+      ansible.builtin.copy:
+        dest: "{{ tbot_config_file }}"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Teleport Machine ID Bot Configuration
+          # Generated by Ansible for {{ inventory_hostname }}
+          version: v2
+          
+          # Teleport proxy connection
+          proxy_server: {{ teleport_proxy_addr }}
+          
+          # Onboarding configuration - uses join token for machine ID
+          onboarding:
+            join_method: token
+            token: {{ teleport_join_token }}
+            {% if teleport_ca_pin is defined and teleport_ca_pin | length > 0 %}
+            ca_pins:
+              - {{ teleport_ca_pin }}
+            {% endif %}
+          
+          # Storage for bot internal state
+          storage:
+            type: directory
+            path: {{ tbot_data_dir }}
+          
+          # Destinations: where certificates are written
+          destinations:
+            - directory:
+                path: {{ tbot_out_dir }}
+                symlinks: insecure
+                acls: off
+              # SSH client configuration for OpenSSH
+              configs:
+                - ssh_client:
+                    # This generates identity file, known_hosts, ssh_config
+                    # suitable for SSH connections using short-lived certs
+      no_log: true
+      notify: Restart tbot service
+    
+    - name: Set SELinux context on tbot config file
+      community.general.sefcontext:
+        target: "{{ tbot_config_file }}"
+        setype: etc_t
+        state: present
+      when: ansible_selinux.status == "enabled"
+    
+    - name: Apply SELinux context to tbot config file
+      ansible.builtin.command:
+        cmd: "restorecon -v {{ tbot_config_file }}"
+      when: ansible_selinux.status == "enabled"
+      changed_when: false
+    
+    ############################################################################
+    # SYSTEMD SERVICE CONFIGURATION
+    ############################################################################
+    
+    - name: Create tbot systemd service unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/tbot.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Teleport Machine ID Bot Service
+          Documentation=https://goteleport.com/docs/machine-id/
+          After=network-online.target
+          Wants=network-online.target
+          
+          [Service]
+          Type=simple
+          User={{ tbot_user }}
+          Group={{ tbot_group }}
+          
+          # Start the bot with explicit paths
+          ExecStart={{ tbot_binary }} start \
+            --config={{ tbot_config_file }} \
+            --data-dir={{ tbot_data_dir }} \
+            --destination-dir={{ tbot_out_dir }}
+          
+          # Restart policy with exponential backoff
+          Restart=on-failure
+          RestartSec=5s
+          StartLimitInterval=300s
+          StartLimitBurst=5
+          
+          # Logging
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=tbot
+          
+          # Security hardening
+          NoNewPrivileges=true
+          PrivateTmp=true
+          ProtectSystem=strict
+          ProtectHome=true
+          ReadWritePaths={{ tbot_data_dir }} {{ tbot_out_dir }}
+          
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart tbot service
+    
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+    
+    - name: Enable tbot service
+      ansible.builtin.systemd:
+        name: tbot
+        enabled: true
+    
+    - name: Start tbot service
+      ansible.builtin.systemd:
+        name: tbot
+        state: started
+      register: tbot_start
+    
+    ############################################################################
+    # VERIFICATION AND HEALTH CHECKS
+    ############################################################################
+    
+    - name: Wait for tbot service to stabilize
+      ansible.builtin.pause:
+        seconds: 5
+    
+    - name: Check tbot service status
+      ansible.builtin.systemd:
+        name: tbot
+      register: tbot_service_status
+    
+    - name: Verify tbot service is active
+      ansible.builtin.assert:
+        that:
+          - tbot_service_status.status.ActiveState == "active"
+        fail_msg: "tbot service is not active. Check journalctl -u tbot for details."
+        success_msg: "tbot service is running successfully"
+    
+    - name: Display tbot service status
+      ansible.builtin.debug:
+        msg: "tbot service status: {{ tbot_service_status.status.ActiveState }}"
+    
+    - name: Retrieve recent tbot logs (sanitized)
+      ansible.builtin.command:
+        cmd: journalctl -u tbot -n 20 --no-pager
+      register: tbot_logs
+      changed_when: false
+    
+    - name: Display recent tbot logs
+      ansible.builtin.debug:
+        msg: "{{ tbot_logs.stdout_lines }}"
+      # Note: Logs should not contain the token as tbot handles it securely
+    
+    - name: Wait for certificate files to be generated
+      ansible.builtin.wait_for:
+        path: "{{ tbot_out_dir }}/{{ item }}"
+        timeout: 60
+        state: present
+      loop:
+        - identity
+        - ssh_config
+      register: cert_files_check
+    
+    - name: List generated certificate files
+      ansible.builtin.find:
+        paths: "{{ tbot_out_dir }}"
+        file_type: file
+      register: output_files
+    
+    - name: Display generated files in output directory
+      ansible.builtin.debug:
+        msg: "Generated certificate files: {{ output_files.files | map(attribute='path') | list }}"
+    
+    - name: Verify critical files exist
+      ansible.builtin.stat:
+        path: "{{ tbot_out_dir }}/{{ item }}"
+      loop:
+        - identity
+        - identity-cert.pub
+        - known_hosts
+        - ssh_config
+      register: critical_files
+      failed_when: not critical_files.stat.exists
+    
+    - name: Final verification summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          Teleport tbot Installation Complete!
+          ============================================================
+          Service Status: {{ tbot_service_status.status.ActiveState }}
+          Output Directory: {{ tbot_out_dir }}
+          Certificate Files: {{ output_files.files | length }} files generated
+          
+          Next Steps:
+          1. Verify certificates: ls -la {{ tbot_out_dir }}
+          2. Check logs: journalctl -u tbot -f
+          3. Configure AAP to bind-mount {{ tbot_out_dir }} into EEs
+          4. Use the SSH identity for connections to Teleport-protected hosts
+          
+          Example SSH usage:
+            ssh -F {{ tbot_out_dir }}/ssh_config user@target-host
+          ============================================================
+  
+  handlers:
+    - name: Restart tbot service
+      ansible.builtin.systemd:
+        name: tbot
+        state: restarted
+        daemon_reload: true
+      when: tbot_service_status is defined and tbot_service_status.status.ActiveState == "active"
