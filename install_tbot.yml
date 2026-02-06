@@ -218,37 +218,32 @@
       register: bot_exists_check
       failed_when: false
       changed_when: false
-      no_log: true
-
+    
     - name: Remove existing bot if it exists
       ansible.builtin.command:
         cmd: "{{ tctl_binary }} bots rm {{ teleport_bot_name }}"
       when: bot_exists_check.rc == 0
       register: bot_remove_result
       failed_when: false
-      no_log: true
-
+    
     - name: Create bot and generate join token
       ansible.builtin.command:
         cmd: "{{ tctl_binary }} bots add {{ teleport_bot_name }} --roles=bot"
       register: bot_add_result
-      no_log: true
       changed_when: true
       failed_when: bot_add_result.rc != 0
-
+    
     - name: Generate new bot instance token
       ansible.builtin.shell: |
         {{ tctl_binary }} bots instances add {{ teleport_bot_name }} --format=json | jq -r '.token_id'
       register: bot_token_result
-      no_log: true
       changed_when: true
       failed_when: bot_token_result.rc != 0 or bot_token_result.stdout | length == 0
-
+    
     - name: Set bot join token fact
       ansible.builtin.set_fact:
         teleport_join_token: "{{ bot_token_result.stdout | trim }}"
-      no_log: true
-
+    
     - name: Verify token was captured
       ansible.builtin.assert:
         that:
