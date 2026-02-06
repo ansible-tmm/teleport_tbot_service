@@ -342,19 +342,6 @@
       no_log: true
       notify: Restart tbot service
 
-    - name: Set SELinux context on tbot config file
-      community.general.sefcontext:
-        target: "{{ tbot_config_file }}"
-        setype: etc_t
-        state: present
-      when: ansible_selinux.status == "enabled"
-
-    - name: Apply SELinux context to tbot config file
-      ansible.builtin.command:
-        cmd: "restorecon -v {{ tbot_config_file }}"
-      when: ansible_selinux.status == "enabled"
-      changed_when: false
-
     ############################################################################
     # SYSTEMD SERVICE CONFIGURATION
     ############################################################################
