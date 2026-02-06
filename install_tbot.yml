@@ -119,51 +119,7 @@
         setype: etc_t
 
     ############################################################################
-    # TELEPORT INSTALLATION - Official Repository Method
-    ############################################################################
-    
-    - name: Add Teleport RPM repository
-      ansible.builtin.yum_repository:
-        name: teleport
-        description: Teleport Repository
-        baseurl: "https://yum.releases.teleport.dev/{{ ansible_distribution_major_version }}/$basearch"
-        gpgcheck: true
-        gpgkey: https://yum.releases.teleport.dev/gpg
-        enabled: true
-        state: present
-      register: teleport_repo
-      failed_when: false
-    
-    - name: Install Teleport package
-      ansible.builtin.dnf:
-        name: "teleport-ent-{{ teleport_version }}"
-        state: present
-        update_cache: true
-      register: teleport_install
-      failed_when: false
-      when: teleport_repo is succeeded
-      # Note: Using teleport-ent; if you need OSS version, use "teleport"
-      # If specific version not available, fallback will occur in next task
-    
-    - name: Verify tbot binary exists
-      ansible.builtin.stat:
-        path: /usr/bin/tbot
-      register: tbot_bin_stat
-    
-    - name: Create symlinks for Teleport binaries if installed via package
-      ansible.builtin.file:
-        src: "/usr/bin/{{ item }}"
-        dest: "/usr/local/bin/{{ item }}"
-        state: link
-        force: true
-      loop:
-        - tbot
-        - tsh
-        - tctl
-      when: tbot_bin_stat.stat.exists
-
-    ############################################################################
-    # FALLBACK: Manual Installation from Tarball (if repo fails)
+    # TELEPORT INSTALLATION - Tarball Method
     ############################################################################
     
     - name: Check if tbot binary exists in /usr/local/bin
@@ -171,13 +127,13 @@
         path: "{{ tbot_binary }}"
       register: tbot_local_bin_stat
     
-    - name: Download Teleport tarball (fallback method)
+    - name: Download Teleport tarball
       ansible.builtin.get_url:
         url: "https://cdn.teleport.dev/teleport-v{{ teleport_version }}-linux-{{ teleport_arch }}-bin.tar.gz"
         dest: "/tmp/teleport-v{{ teleport_version }}.tar.gz"
         mode: '0644'
         timeout: 300
-      when: not tbot_bin_stat.stat.exists and not tbot_local_bin_stat.stat.exists
+      when: not tbot_local_bin_stat.stat.exists
       register: teleport_download
     
     - name: Extract Teleport tarball
@@ -186,7 +142,7 @@
         dest: /tmp
         remote_src: true
         creates: "/tmp/teleport/tbot"
-      when: not tbot_bin_stat.stat.exists and not tbot_local_bin_stat.stat.exists
+      when: not tbot_local_bin_stat.stat.exists
     
     - name: Install Teleport binaries from tarball
       ansible.builtin.copy:
@@ -200,7 +156,7 @@
         - tbot
         - tsh
         - tctl
-      when: not tbot_bin_stat.stat.exists and not tbot_local_bin_stat.stat.exists
+      when: not tbot_local_bin_stat.stat.exists
     
     - name: Cleanup temporary files
       ansible.builtin.file:
