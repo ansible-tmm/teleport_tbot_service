@@ -432,36 +432,32 @@
         fail_msg: "tbot service is not active. Check logs above for details."
         success_msg: "tbot service is running successfully"
 
-    - name: Wait for certificate files to be generated
+    - name: Wait for identity file to be generated
       ansible.builtin.wait_for:
-        path: "{{ tbot_out_dir }}/{{ item }}"
+        path: "{{ tbot_out_dir }}/identity"
         timeout: 60
         state: present
-      loop:
-        - identity
-        - ssh_config
-      register: cert_files_check
-
+      register: identity_file_check
+    
     - name: List generated certificate files
       ansible.builtin.find:
         paths: "{{ tbot_out_dir }}"
         file_type: file
       register: output_files
-
+    
     - name: Display generated files in output directory
       ansible.builtin.debug:
         msg: "Generated certificate files: {{ output_files.files | map(attribute='path') | list }}"
-
-    - name: Verify critical files exist
+    
+    - name: Verify identity file exists
       ansible.builtin.stat:
-        path: "{{ tbot_out_dir }}/{{ item }}"
-      loop:
-        - identity
-        - identity-cert.pub
-        - known_hosts
-        - ssh_config
-      register: critical_files
-      failed_when: not critical_files.stat.exists
+        path: "{{ tbot_out_dir }}/identity"
+      register: identity_stat
+      failed_when: not identity_stat.stat.exists
+    
+    - name: Display identity file info
+      ansible.builtin.debug:
+        msg: "Identity file: {{ tbot_out_dir }}/identity ({{ identity_stat.stat.size }} bytes)"
 
     ############################################################################
     # CLEANUP
@@ -482,15 +478,17 @@
           Service Status: {{ tbot_service_status.status.ActiveState }}
           Output Directory: {{ tbot_out_dir }}
           Certificate Files: {{ output_files.files | length }} files generated
-
+          Identity File: {{ identity_stat.stat.size }} bytes
+          
           Next Steps:
-          1. Verify certificates: ls -la {{ tbot_out_dir }}
-          2. Check logs: journalctl -u tbot -f
-          3. Configure AAP to bind-mount {{ tbot_out_dir }} into EEs
-          4. Use the SSH identity for connections to Teleport-protected hosts
-
-          Example SSH usage:
-            ssh -F {{ tbot_out_dir }}/ssh_config user@target-host
+          1. Verify certificates: sudo ls -la {{ tbot_out_dir }}
+          2. Check logs: sudo journalctl -u tbot -f
+          3. Test SSH access:
+             sudo tsh --identity={{ tbot_out_dir }}/identity \
+               --proxy={{ teleport_proxy_addr }} \
+               ssh user@target-host
+          4. Configure AAP to bind-mount {{ tbot_out_dir }} into EEs
+          5. Use the identity in Ansible SSH connections
           ============================================================
 
   handlers:
