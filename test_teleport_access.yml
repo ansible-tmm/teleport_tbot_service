@@ -6,7 +6,8 @@
   vars:
     tbot_identity_path: "/var/lib/teleport-bot/aap-bot/out/identity"
     teleport_proxy: "sean-test.teleport.sh:443"
-    tsh_binary: "/usr/local/bin/tsh"
+    # The install script puts binaries in /usr/local/bin/teleport/
+    tsh_binary: "/usr/local/bin/teleport/tsh"
     # Override these with extra vars if needed
     test_target_host: "rhel01-nostromo.demoredhat.com"
     test_target_user: "ec2-user"
