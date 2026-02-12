@@ -16,7 +16,13 @@
     ############################################################################
     # TEST 1: Verify Access to Teleport Identity File
     ############################################################################
+- name: Debug - Check current user
+  ansible.builtin.command: id
+  register: current_user
 
+- name: Display current user info
+  ansible.builtin.debug:
+    msg: "{{ current_user.stdout }}"
     - name: "TEST 1: Certificate Access"
       ansible.builtin.debug:
         msg: "=== TEST 1: Checking access to Teleport identity file ==="
