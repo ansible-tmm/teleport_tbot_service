@@ -118,3 +118,50 @@ After running the playbook:
 4. Configure AAP to bind-mount `/var/lib/teleport-bot/{bot_name}/out` into Execution Environments
 
 5. Use the SSH identity in Ansible playbooks for connections to Teleport-protected hosts
+
+## Troubleshooting
+
+### Error: "user 'bot-aap-bot' has requested role impersonation for ['aap-ssh']"
+
+**Symptom:** 
+- tbot service is running but logs show repeated failures
+- Identity file timestamp is old and not being updated
+- SSH attempts fail with "cert has expired"
+
+**Cause:** The bot role doesn't have permission to impersonate the access role in Teleport.
+
+**Fix:**
+1. Log into Teleport as an administrator
+2. Navigate to: **Access Management → Roles → bot-aap-bot**
+3. Edit the role and add the impersonation permission:
+   ```yaml
+   spec:
+     allow:
+       impersonate:
+         roles:
+           - aap-ssh
+   ```
+4. Save the role configuration
+5. Restart tbot on the execution node:
+   ```bash
+   sudo systemctl restart tbot
+   sudo journalctl -u tbot -f
+   ```
+
+Look for `Task succeeded. Waiting interval task:output-renewal` in the logs to confirm it's working.
+
+**Note:** This is a Teleport RBAC configuration issue, not a playbook issue. The impersonation permission must be configured by a Teleport administrator through the Teleport UI or tctl.
+
+### Certificate Verification
+
+Check if certificates are being renewed:
+```bash
+# Check file timestamp (should update every ~20 minutes)
+sudo ls -la /var/lib/teleport-bot/aap-bot/out/identity
+
+# Check tbot service status
+sudo systemctl status tbot
+
+# View recent logs
+sudo journalctl -u tbot -n 50 --no-pager
+```

@@ -1,0 +1,202 @@
+---
+- name: Test Teleport tbot Identity Access and SSH Connectivity
+  hosts: localhost
+  gather_facts: false
+  
+  vars:
+    tbot_identity_path: "/var/lib/teleport-bot/aap-bot/out/identity"
+    teleport_proxy: "sean-test.teleport.sh:443"
+    tsh_binary: "/usr/local/bin/tsh"
+    # Override these with extra vars if needed
+    test_target_host: "rhel01-nostromo.demoredhat.com"
+    test_target_user: "ec2-user"
+  
+  tasks:
+    
+    ############################################################################
+    # TEST 1: Verify Access to Teleport Identity File
+    ############################################################################
+    
+    - name: "TEST 1: Certificate Access"
+      ansible.builtin.debug:
+        msg: "=== TEST 1: Checking access to Teleport identity file ==="
+    
+    - name: Check if identity file exists
+      ansible.builtin.stat:
+        path: "{{ tbot_identity_path }}"
+      register: identity_file
+    
+    - name: Display identity file status
+      ansible.builtin.debug:
+        msg: |
+          Identity File: {{ tbot_identity_path }}
+          Exists: {{ identity_file.stat.exists }}
+          {% if identity_file.stat.exists %}
+          Readable: {{ identity_file.stat.readable }}
+          Size: {{ identity_file.stat.size }} bytes
+          Owner: {{ identity_file.stat.pw_name }}:{{ identity_file.stat.gr_name }}
+          Permissions: {{ identity_file.stat.mode }}
+          Modified: {{ identity_file.stat.mtime | int | to_datetime }}
+          {% endif %}
+    
+    - name: FAIL if identity file does not exist
+      ansible.builtin.fail:
+        msg: |
+          ❌ FAILED: Identity file not found at {{ tbot_identity_path }}
+          
+          This means the EE does not have access to the tbot output directory.
+          
+          FIX: In AAP, configure the Job Template or Execution Environment to:
+          - Mount: /var/lib/teleport-bot/aap-bot/out
+          - At: /var/lib/teleport-bot/aap-bot/out
+      when: not identity_file.stat.exists
+    
+    - name: FAIL if identity file is not readable
+      ansible.builtin.fail:
+        msg: |
+          ❌ FAILED: Identity file exists but is not readable
+          
+          File: {{ tbot_identity_path }}
+          Owner: {{ identity_file.stat.pw_name }}:{{ identity_file.stat.gr_name }}
+          Permissions: {{ identity_file.stat.mode }}
+          
+          FIX: Check file permissions or UID/GID mapping in the EE
+      when: identity_file.stat.exists and not identity_file.stat.readable
+    
+    - name: SUCCESS - Identity file is accessible
+      ansible.builtin.debug:
+        msg: |
+          ✅ SUCCESS: Identity file is accessible
+          Size: {{ identity_file.stat.size }} bytes
+          Age: {{ ((ansible_date_time.epoch | int) - (identity_file.stat.mtime | int)) // 60 }} minutes old
+    
+    - name: Check if tsh binary exists
+      ansible.builtin.stat:
+        path: "{{ tsh_binary }}"
+      register: tsh_file
+    
+    - name: Display tsh binary status
+      ansible.builtin.debug:
+        msg: |
+          tsh Binary: {{ tsh_binary }}
+          Exists: {{ tsh_file.stat.exists }}
+          {% if tsh_file.stat.exists %}
+          Executable: {{ tsh_file.stat.executable }}
+          {% endif %}
+    
+    - name: FAIL if tsh binary does not exist
+      ansible.builtin.fail:
+        msg: |
+          ❌ FAILED: tsh binary not found at {{ tsh_binary }}
+          
+          FIX: Install Teleport tools in the Execution Environment or
+          use a different path if tsh is installed elsewhere.
+      when: not tsh_file.stat.exists
+    
+    - name: SUCCESS - tsh binary is available
+      ansible.builtin.debug:
+        msg: "✅ SUCCESS: tsh binary is available and executable"
+      when: tsh_file.stat.exists and tsh_file.stat.executable
+    
+    ############################################################################
+    # TEST 2: Verify SSH Connectivity via Teleport
+    ############################################################################
+    
+    - name: "TEST 2: SSH Connectivity"
+      ansible.builtin.debug:
+        msg: "=== TEST 2: Testing SSH connectivity via Teleport ==="
+    
+    - name: List available Teleport hosts
+      ansible.builtin.command:
+        cmd: >
+          {{ tsh_binary }}
+          --identity={{ tbot_identity_path }}
+          --proxy={{ teleport_proxy }}
+          ls --format=text
+      register: tsh_ls_result
+      changed_when: false
+      failed_when: false
+    
+    - name: Display available Teleport hosts
+      ansible.builtin.debug:
+        msg: |
+          Available Teleport Hosts:
+          {{ tsh_ls_result.stdout }}
+      when: tsh_ls_result.rc == 0
+    
+    - name: FAIL if cannot list Teleport hosts
+      ansible.builtin.fail:
+        msg: |
+          ❌ FAILED: Cannot list Teleport hosts
+          
+          Error: {{ tsh_ls_result.stderr }}
+          
+          Possible causes:
+          - Identity certificate expired (check tbot service on execution node)
+          - Network connectivity to {{ teleport_proxy }}
+          - RBAC permissions (bot role impersonation)
+      when: tsh_ls_result.rc != 0
+    
+    - name: Test SSH connection to target host
+      ansible.builtin.command:
+        cmd: >
+          {{ tsh_binary }}
+          --identity={{ tbot_identity_path }}
+          --proxy={{ teleport_proxy }}
+          ssh {{ test_target_user }}@{{ test_target_host }}
+          echo "Teleport SSH connection successful"
+      register: tsh_ssh_result
+      changed_when: false
+      failed_when: false
+    
+    - name: Display SSH test result
+      ansible.builtin.debug:
+        msg: |
+          SSH Test to {{ test_target_user }}@{{ test_target_host }}:
+          Return Code: {{ tsh_ssh_result.rc }}
+          Output: {{ tsh_ssh_result.stdout }}
+    
+    - name: FAIL if SSH connection failed
+      ansible.builtin.fail:
+        msg: |
+          ❌ FAILED: SSH connection to {{ test_target_host }} failed
+          
+          Error: {{ tsh_ssh_result.stderr }}
+          
+          Possible causes:
+          - Host not accessible via Teleport
+          - Wrong username (tried: {{ test_target_user }})
+          - Network connectivity
+          - SSH permissions on target host
+      when: tsh_ssh_result.rc != 0
+    
+    - name: SUCCESS - SSH connection works
+      ansible.builtin.debug:
+        msg: |
+          ✅ SUCCESS: SSH connection to {{ test_target_host }} works!
+          
+          Response: {{ tsh_ssh_result.stdout }}
+    
+    ############################################################################
+    # FINAL SUMMARY
+    ############################################################################
+    
+    - name: Final Test Summary
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          🎉 ALL TESTS PASSED! 🎉
+          ============================================================
+          
+          ✅ TEST 1: Identity file is accessible
+             Location: {{ tbot_identity_path }}
+             Size: {{ identity_file.stat.size }} bytes
+             Age: {{ ((ansible_date_time.epoch | int) - (identity_file.stat.mtime | int)) // 60 }} minutes
+          
+          ✅ TEST 2: SSH connectivity via Teleport works
+             Target: {{ test_target_user }}@{{ test_target_host }}
+             Proxy: {{ teleport_proxy }}
+          
+          Your AAP Execution Environment is correctly configured!
+          You can now use Teleport SSH in your playbooks.
+          ============================================================
