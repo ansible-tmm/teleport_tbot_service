@@ -83,17 +83,16 @@
       ansible.builtin.debug:
         msg: |
           Identity File: {{ tbot_identity_path }}
-          Stat result: {{ identity_file }}
-      when: identity_file is defined
-    
+          Exists: {{ identity_file.stat.exists }}
+          Readable: {{ identity_file.stat.readable }}
+          Size: {{ identity_file.stat.size }} bytes
+          Owner: {{ identity_file.stat.pw_name }}:{{ identity_file.stat.gr_name }}
+          Permissions: {{ identity_file.stat.mode }}
+      when: identity_file.stat.exists
+
     - name: Check if stat succeeded
       ansible.builtin.debug:
-        msg: |
-          Stat module result:
-          - Failed: {{ identity_file.failed | default(false) }}
-          - Message: {{ identity_file.msg | default('N/A') }}
-          - Has stat key: {{ 'stat' in identity_file }}
-      when: identity_file is defined
+        msg: "Stat check: {{ 'SUCCESS' if identity_file.stat.exists and identity_file.stat.readable else 'FAILED' }}"
 
     - name: FAIL if identity file does not exist
       ansible.builtin.fail:
@@ -119,12 +118,18 @@
           FIX: Check file permissions or UID/GID mapping in the EE
       when: identity_file.stat.exists and not identity_file.stat.readable
 
+    - name: Get current time
+      ansible.builtin.command: date +%s
+      register: current_time
+      changed_when: false
+
     - name: SUCCESS - Identity file is accessible
       ansible.builtin.debug:
         msg: |
           ✅ SUCCESS: Identity file is accessible
           Size: {{ identity_file.stat.size }} bytes
-          Age: {{ ((ansible_date_time.epoch | int) - (identity_file.stat.mtime | int)) // 60 }} minutes old
+          Modified: {{ identity_file.stat.mtime | int }}
+          Age: {{ ((current_time.stdout | int) - (identity_file.stat.mtime | int)) // 60 }} minutes old
 
     - name: Check if tsh binary exists
       ansible.builtin.stat:
@@ -247,7 +252,7 @@
           ✅ TEST 1: Identity file is accessible
              Location: {{ tbot_identity_path }}
              Size: {{ identity_file.stat.size }} bytes
-             Age: {{ ((ansible_date_time.epoch | int) - (identity_file.stat.mtime | int)) // 60 }} minutes
+             Modified: {{ identity_file.stat.mtime | int }}
 
           ✅ TEST 2: SSH connectivity via Teleport works
              Target: {{ test_target_user }}@{{ test_target_host }}
