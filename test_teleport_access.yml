@@ -14,16 +14,61 @@
   tasks:
 
     ############################################################################
-    # TEST 1: Verify Access to Teleport Identity File
+    # DEBUG: Check mount and filesystem access
     ############################################################################
-    - name: Debug - Check current user
+
+    - name: "DEBUG: Check current user"
       ansible.builtin.command: id
       register: current_user
+      changed_when: false
 
-    - name: Display current user info
+    - name: "DEBUG: Display current user info"
       ansible.builtin.debug:
         msg: "{{ current_user.stdout }}"
 
+    - name: "DEBUG: Check if parent directory exists"
+      ansible.builtin.command: ls -la /var/lib/teleport-bot/
+      register: parent_dir
+      changed_when: false
+      failed_when: false
+
+    - name: "DEBUG: Display parent directory"
+      ansible.builtin.debug:
+        msg: "{{ parent_dir.stdout_lines }}"
+
+    - name: "DEBUG: Check if bot directory exists"
+      ansible.builtin.command: ls -la /var/lib/teleport-bot/aap-bot/
+      register: bot_dir
+      changed_when: false
+      failed_when: false
+
+    - name: "DEBUG: Display bot directory"
+      ansible.builtin.debug:
+        msg: "{{ bot_dir.stdout_lines }}"
+
+    - name: "DEBUG: Check if out directory exists"
+      ansible.builtin.command: ls -la /var/lib/teleport-bot/aap-bot/out/
+      register: out_dir
+      changed_when: false
+      failed_when: false
+
+    - name: "DEBUG: Display out directory"
+      ansible.builtin.debug:
+        msg: "{{ out_dir.stdout_lines }}"
+
+    - name: "DEBUG: Check mounts"
+      ansible.builtin.command: mount
+      register: mounts
+      changed_when: false
+      failed_when: false
+
+    - name: "DEBUG: Display relevant mounts"
+      ansible.builtin.debug:
+        msg: "{{ mounts.stdout_lines | select('search', 'teleport') | list }}"
+
+    ############################################################################
+    # TEST 1: Verify Access to Teleport Identity File
+    ############################################################################
     - name: "TEST 1: Certificate Access"
       ansible.builtin.debug:
         msg: "=== TEST 1: Checking access to Teleport identity file ==="
@@ -32,6 +77,7 @@
       ansible.builtin.stat:
         path: "{{ tbot_identity_path }}"
       register: identity_file
+      failed_when: false
 
     - name: Display identity file status
       ansible.builtin.debug:
