@@ -1,0 +1,16 @@
+---
+- name: Simple Connectivity Test via Teleport
+  hosts: all
+  gather_facts: false
+  
+  tasks:
+    
+    - name: Test connectivity with ping
+      ansible.builtin.ping:
+      register: ping_result
+    
+    - name: Display ping result
+      ansible.builtin.debug:
+        msg: |
+          ✅ Connection successful to {{ inventory_hostname }}
+          Ping response: {{ ping_result.ping }}
