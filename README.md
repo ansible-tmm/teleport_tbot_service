@@ -1,40 +1,63 @@
 # Teleport tbot Service for Ansible Automation Platform
 
-Ansible playbook to install and configure Teleport tbot (Machine ID) as a systemd service on RHEL9 execution nodes used by Ansible Automation Platform.
+Ansible playbook to install and configure Teleport tbot (Machine ID) as a systemd service on RHEL9 execution nodes used by Ansible Automation Platform. This enables AAP Execution Environments to use short-lived SSH certificates for secure access to Teleport-protected hosts.
 
 ## Purpose
 
-Deploy Teleport tbot as a systemd service on RHEL9 execution nodes for Ansible Automation Platform. tbot continuously maintains short-lived SSH certificates in an output directory for bind-mounting into Execution Environments.
+Deploy Teleport tbot as a systemd service on RHEL9 execution nodes. tbot continuously maintains short-lived SSH certificates that AAP Execution Environments can use to SSH into Teleport-protected hosts without storing static SSH keys or passwords.
 
 ## Prerequisites
 
-### Teleport Administrator Must Complete (One-Time Setup)
+### 1. Teleport Administrator Must Complete (One-Time Setup)
 
 Before running this playbook, a Teleport administrator must:
 
-1. **Create an SSH access role** (e.g., `aap-ssh`) in Teleport with:
-   - SSH login permissions for target hosts
-   - Appropriate host labels and user mappings
-   - Node access configuration
+**Step 1: Create an SSH access role** (e.g., `aap-ssh`) in Teleport with:
+```yaml
+kind: role
+version: v7
+metadata:
+  name: aap-ssh
+spec:
+  allow:
+    logins: ['ec2-user', 'ansible', 'root']
+    node_labels:
+      '*': '*'  # Or restrict to specific labels
+```
 
-2. **Configure bot impersonation** - The bot role (auto-created as `bot-{bot_name}`) must allow impersonation of the access role:
-   ```yaml
-   kind: role
-   version: v7
-   metadata:
-     name: bot-aap-bot
-   spec:
-     allow:
-       impersonate:
-         roles:
-           - aap-ssh
-   ```
+**Step 2: Configure bot impersonation** - After the playbook creates the bot (e.g., `bot-aap-bot`), update that bot role to allow impersonation:
+```yaml
+kind: role
+version: v7
+metadata:
+  name: bot-aap-bot  # Auto-created by playbook
+spec:
+  allow:
+    impersonate:
+      roles:
+        - aap-ssh
+```
 
-**Why this matters:** Teleport uses a two-role model for bots:
-- **Bot role** (`bot-aap-bot`): Bot's authentication identity
-- **Access role** (`aap-ssh`): Permissions the bot impersonates for SSH access
+**Why this matters:** 
+- **Bot role** (`bot-aap-bot`): Bot's authentication identity (auto-created by playbook)
+- **Access role** (`aap-ssh`): SSH permissions the bot impersonates (must be pre-created)
+- The bot authenticates as itself, then requests to impersonate the access role to get SSH certificates
+- This separation is a Teleport security model - the playbook cannot configure impersonation permissions
 
-The playbook creates the bot automatically but **cannot** create roles or configure impersonation permissions.
+### 2. Execution Node Requirements
+
+- RHEL9 (or compatible)
+- Outbound network access to Teleport proxy
+- SELinux enforcing (supported)
+- Root/sudo access for playbook execution
+
+### 3. Execution Environment Requirements
+
+Your EE must have:
+- `tsh` binary installed (e.g., `/usr/local/bin/tsh`)
+- Mount point configured in AAP for the certificate directory
+
+Example EE setup: https://github.com/ansible-tmm/ee-builds/tree/main/teleport-ssh-ee
 
 ## Usage
 
@@ -48,6 +71,8 @@ ansible-playbook install_tbot.yml \
   -e teleport_admin_password=your-password \
   -e teleport_mfa_token=123456
 ```
+
+**Note:** The playbook will create the bot in Teleport automatically. After the first run, you must configure the bot role impersonation (see Prerequisites above).
 
 ## Required Extra Variables
 
@@ -66,62 +91,81 @@ ansible-playbook install_tbot.yml \
 
 ## What It Does
 
-1. Creates a dedicated `tbot` system user and group
-2. Sets up directory structure:
+1. **Installs Teleport binaries** (tbot, tsh, tctl) from CDN tarball
+2. **Creates system user/group** (`tbot:tbot`)
+3. **Sets up directory structure**:
    - `/var/lib/teleport-bot/` (base)
    - `/var/lib/teleport-bot/{bot_name}/data` (tbot state)
    - `/var/lib/teleport-bot/{bot_name}/out` (SSH certificates)
-3. Installs Teleport binaries (tbot, tsh, tctl) from CDN tarball
 4. **Performs admin login** with username/password/MFA
-5. **Creates bot and generates join token automatically**
-6. Generates tbot.yaml configured to:
+5. **Creates bot in Teleport** and generates join token automatically
+6. **Generates tbot.yaml** configured to:
    - Authenticate as `bot-{bot_name}`
-   - Request impersonation of the access role
-   - Write SSH identity artifacts to output directory
-7. Creates and enables systemd service
-8. Verifies service is running and certificates are generated
-9. Cleans up admin session for security
+   - Request impersonation of the access role (`aap-ssh`)
+   - Write SSH identity to output directory
+7. **Creates systemd service** that runs continuously
+8. **Verifies** service is running and certificates are generated
+9. **Cleans up** admin session for security
 
 ## How It Works (Teleport RBAC Model)
 
-1. **Bot authentication**: tbot authenticates as `bot-{bot_name}` (auto-created by Teleport)
-2. **Role impersonation**: tbot requests to impersonate `{access_role}` (e.g., `aap-ssh`)
-3. **Permission check**: Teleport verifies the bot role is allowed to impersonate the access role
+When tbot runs:
+
+1. **Bot authentication**: tbot authenticates to Teleport as `bot-{bot_name}` using the join token (first time) or stored identity (subsequent renewals)
+2. **Role impersonation request**: tbot requests to impersonate `{access_role}` (e.g., `aap-ssh`)
+3. **Permission check**: Teleport verifies the bot role is allowed to impersonate the access role (configured in Teleport RBAC)
 4. **Certificate generation**: Teleport issues short-lived SSH certificates with `{access_role}` permissions
-5. **File output**: Certificates are written to `/var/lib/teleport-bot/{bot_name}/out/`
-6. **Continuous renewal**: tbot automatically refreshes certificates before expiration
+5. **File output**: Certificates are written to `/var/lib/teleport-bot/{bot_name}/out/identity`
+6. **Continuous renewal**: tbot automatically refreshes certificates every ~20 minutes before expiration
 
-**Key point:** Impersonation permissions are configured in Teleport RBAC, not in tbot.yaml or this playbook.
+**Key points:**
+- Impersonation permissions are configured in **Teleport RBAC**, not in tbot.yaml or this playbook
+- The join token is single-use for initial enrollment only
+- After enrollment, tbot uses its stored identity to renew certificates automatically
+- No additional tokens or credentials are needed after initial setup
 
-## Next Steps
+## Verification
 
-After running the playbook:
+After running the playbook and configuring AAP mounts:
 
-1. Verify certificates exist:
-   ```bash
-   sudo ls -la /var/lib/teleport-bot/{bot_name}/out/
-   ```
+### On the Execution Node
 
-2. Check tbot service logs:
-   ```bash
-   sudo journalctl -u tbot -f
-   ```
+```bash
+# Check tbot service status
+sudo systemctl status tbot
 
-3. Test SSH access using the identity:
-   ```bash
-   sudo tsh \
-     --identity=/var/lib/teleport-bot/{bot_name}/out/identity \
-     --proxy={teleport_proxy_addr} \
-     ssh user@target-host
-   ```
+# View logs
+sudo journalctl -u tbot -n 50 --no-pager
 
-4. Configure AAP to bind-mount `/var/lib/teleport-bot/{bot_name}/out` into Execution Environments
+# Verify certificate exists and is fresh
+sudo ls -la /var/lib/teleport-bot/aap-bot/out/identity
 
-5. Use the SSH identity in Ansible playbooks for connections to Teleport-protected hosts
+# Test SSH manually
+sudo /usr/local/bin/tsh \
+  --identity=/var/lib/teleport-bot/aap-bot/out/identity \
+  --proxy=sean-test.teleport.sh:443 \
+  ssh ec2-user@rhel01-nostromo.demoredhat.com
+```
+
+### In AAP
+
+Run the test playbook as a Job Template:
+```bash
+ansible-playbook test_teleport_access.yml
+```
+
+Expected output:
+```
+✅ TEST 1: Identity file is accessible
+✅ TEST 2: SSH connectivity via Teleport works
+🎉 ALL TESTS PASSED!
+```
 
 ## Troubleshooting
 
-### Error: "user 'bot-aap-bot' has requested role impersonation for ['aap-ssh']"
+### Common Issues
+
+#### 1. Error: "user 'bot-aap-bot' has requested role impersonation for ['aap-ssh']"
 
 **Symptom:** 
 - tbot service is running but logs show repeated failures
@@ -133,7 +177,7 @@ After running the playbook:
 **Fix:**
 1. Log into Teleport as an administrator
 2. Navigate to: **Access Management → Roles → bot-aap-bot**
-3. Edit the role and add the impersonation permission:
+3. Edit the role and add:
    ```yaml
    spec:
      allow:
@@ -148,20 +192,41 @@ After running the playbook:
    sudo journalctl -u tbot -f
    ```
 
-Look for `Task succeeded. Waiting interval task:output-renewal` in the logs to confirm it's working.
+Look for `Task succeeded. Waiting interval task:output-renewal` to confirm it's working.
 
-**Note:** This is a Teleport RBAC configuration issue, not a playbook issue. The impersonation permission must be configured by a Teleport administrator through the Teleport UI or tctl.
+#### 2. AAP Job: "Identity file not found" or "Permission denied"
 
-### Certificate Verification
+**Cause:** Mount not configured or permission/SELinux issues.
 
-Check if certificates are being renewed:
+**Fix:**
+
+On the execution node:
 ```bash
-# Check file timestamp (should update every ~20 minutes)
-sudo ls -la /var/lib/teleport-bot/aap-bot/out/identity
+# Set correct permissions (run after initial playbook execution)
+sudo chmod 755 /var/lib/teleport-bot/aap-bot
+sudo chmod 755 /var/lib/teleport-bot/aap-bot/out
+sudo chmod 644 /var/lib/teleport-bot/aap-bot/out/identity
 
-# Check tbot service status
-sudo systemctl status tbot
-
-# View recent logs
-sudo journalctl -u tbot -n 50 --no-pager
+# Set SELinux context for container access
+sudo chcon -R -t container_file_t /var/lib/teleport-bot/aap-bot/out/
 ```
+
+In AAP:
+1. Go to **Settings → Automation Execution → Job**
+2. Add to **Paths to expose to isolated jobs**:
+   ```
+   /var/lib/teleport-bot/aap-bot:/var/lib/teleport-bot/aap-bot:ro
+   ```
+
+#### 3. Certificates Not Renewing
+
+Check tbot service and logs:
+```bash
+sudo systemctl status tbot
+sudo journalctl -u tbot -n 100 --no-pager | grep -i error
+```
+
+Common causes:
+- Network connectivity to Teleport proxy
+- RBAC permissions changed in Teleport
+- tbot service crashed (check systemd restart counter)
