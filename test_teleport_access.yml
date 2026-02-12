@@ -83,14 +83,17 @@
       ansible.builtin.debug:
         msg: |
           Identity File: {{ tbot_identity_path }}
-          Exists: {{ identity_file.stat.exists }}
-          {% if identity_file.stat.exists %}
-          Readable: {{ identity_file.stat.readable }}
-          Size: {{ identity_file.stat.size }} bytes
-          Owner: {{ identity_file.stat.pw_name }}:{{ identity_file.stat.gr_name }}
-          Permissions: {{ identity_file.stat.mode }}
-          Modified: {{ identity_file.stat.mtime | int | to_datetime }}
-          {% endif %}
+          Stat result: {{ identity_file }}
+      when: identity_file is defined
+    
+    - name: Check if stat succeeded
+      ansible.builtin.debug:
+        msg: |
+          Stat module result:
+          - Failed: {{ identity_file.failed | default(false) }}
+          - Message: {{ identity_file.msg | default('N/A') }}
+          - Has stat key: {{ 'stat' in identity_file }}
+      when: identity_file is defined
 
     - name: FAIL if identity file does not exist
       ansible.builtin.fail:
