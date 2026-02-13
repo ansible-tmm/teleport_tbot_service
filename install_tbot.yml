@@ -57,6 +57,7 @@
 
     # Directory structure
     tbot_base_dir: "/var/lib/teleport-bot"
+    tbot_bot_dir: "/var/lib/teleport-bot/{{ teleport_bot_name }}"
     tbot_data_dir: "/var/lib/teleport-bot/{{ teleport_bot_name }}/data"
     tbot_out_dir: "/var/lib/teleport-bot/{{ teleport_bot_name }}/out"
     tbot_config_dir: "/etc/teleport"
@@ -124,6 +125,16 @@
         mode: '0755'
         setype: var_lib_t
 
+    - name: Create bot directory (traversable for EE container access)
+      ansible.builtin.file:
+        path: "{{ tbot_bot_dir }}"
+        state: directory
+        owner: "{{ tbot_user }}"
+        group: "{{ tbot_group }}"
+        mode: '0755'
+      # This directory is the bind mount root for AAP EEs
+      # Must be world-traversable so containers can access subdirectories
+
     - name: Create bot-specific data directory
       ansible.builtin.file:
         path: "{{ tbot_data_dir }}"
@@ -131,7 +142,6 @@
         owner: "{{ tbot_user }}"
         group: "{{ tbot_group }}"
         mode: '0700'
-        setype: var_lib_t
       # This directory holds tbot's internal state and must be writable by tbot user only
 
     - name: Create bot-specific output directory for certificates
@@ -140,11 +150,9 @@
         state: directory
         owner: "{{ tbot_user }}"
         group: "{{ tbot_group }}"
-        mode: '0750'
-        setype: var_lib_t
-      # Output directory: owned by tbot, group-readable
-      # The awx user (or EE runtime) will access this later via group membership or bind mount
-      # For now, keeping it tbot:tbot with 0750 for least privilege
+        mode: '0755'
+      # Output directory: world-readable/traversable so EE containers can
+      # access identity and ssh_config files via bind mount
 
     - name: Create Teleport configuration directory
       ansible.builtin.file:
@@ -460,6 +468,93 @@
         msg: "Identity file: {{ tbot_out_dir }}/identity ({{ identity_stat.stat.size }} bytes)"
 
     ############################################################################
+    # EE CONTAINER ACCESS - Permissions & SELinux
+    ############################################################################
+    # tbot writes output files with 0600 permissions on every renewal (~20 min).
+    # AAP Execution Environments run as containers and need to READ these files
+    # (identity, ssh_config, etc.) via bind mount.
+    #
+    # This section:
+    # 1. Sets persistent SELinux fcontext so new files get container_file_t
+    # 2. Fixes current file permissions and SELinux labels
+    # 3. Creates a systemd path watcher to auto-fix permissions on every renewal
+
+    - name: Install policycoreutils-python-utils for semanage
+      ansible.builtin.dnf:
+        name: policycoreutils-python-utils
+        state: present
+
+    - name: Set persistent SELinux fcontext for bot directory (container access)
+      ansible.builtin.command:
+        cmd: "semanage fcontext -a -t container_file_t '{{ tbot_bot_dir }}(/.*)?'"
+      register: semanage_result
+      changed_when: semanage_result.rc == 0
+      failed_when: false
+      # Fails gracefully if rule already exists
+
+    - name: Apply SELinux labels to bot directory
+      ansible.builtin.command:
+        cmd: "restorecon -R {{ tbot_bot_dir }}"
+      changed_when: true
+
+    - name: Fix output file permissions for container readability
+      ansible.builtin.shell: |
+        chmod -R o+rX {{ tbot_out_dir }}/
+      changed_when: true
+
+    - name: Create tbot-perms systemd path watcher
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/tbot-perms.path
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Auto-fix tbot output file permissions when tbot renews certificates
+          # tbot writes files with 0600 but EE containers need read access
+          [Unit]
+          Description=Watch tbot output directory for permission fixes
+          After=tbot.service
+
+          [Path]
+          PathChanged={{ tbot_out_dir }}
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Reload and restart tbot-perms path watcher
+
+    - name: Create tbot-perms systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/tbot-perms.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Triggered by tbot-perms.path when tbot updates output files
+          # Fixes permissions so EE containers can read identity and ssh_config
+          [Unit]
+          Description=Fix tbot output file permissions for container access
+
+          [Service]
+          Type=oneshot
+          # Small delay to ensure tbot finishes writing all files
+          ExecStartPre=/bin/sleep 2
+          # Make all output files world-readable, directories world-traversable
+          ExecStart=/bin/chmod -R o+rX {{ tbot_out_dir }}/
+          # Ensure SELinux labels are correct for container access
+          ExecStart=/usr/sbin/restorecon -R {{ tbot_out_dir }}/
+      notify: Reload and restart tbot-perms path watcher
+
+    - name: Reload systemd for path watcher
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Enable and start tbot-perms path watcher
+      ansible.builtin.systemd:
+        name: tbot-perms.path
+        enabled: true
+        state: started
+
+    ############################################################################
     # CLEANUP
     ############################################################################
 
@@ -480,6 +575,10 @@
           Certificate Files: {{ output_files.files | length }} files generated
           Identity File: {{ identity_stat.stat.size }} bytes
           
+          Automated Permission Fixing: ENABLED
+            tbot-perms.path watches {{ tbot_out_dir }} and auto-fixes
+            file permissions + SELinux labels on every tbot renewal.
+          
           Next Steps:
           1. Verify certificates: sudo ls -la {{ tbot_out_dir }}
           2. Check logs: sudo journalctl -u tbot -f
@@ -487,7 +586,8 @@
              sudo tsh --identity={{ tbot_out_dir }}/identity \
                --proxy={{ teleport_proxy_addr }} \
                ssh user@target-host
-          4. Configure AAP to bind-mount {{ tbot_out_dir }} into EEs
+          4. Configure AAP to bind-mount {{ tbot_bot_dir }} into EEs:
+               {{ tbot_bot_dir }}:{{ tbot_bot_dir }}:ro
           5. Use the identity in Ansible SSH connections
           ============================================================
 
@@ -498,3 +598,9 @@
         state: restarted
         daemon_reload: true
       when: tbot_service_status is defined and tbot_service_status.status.ActiveState == "active"
+
+    - name: Reload and restart tbot-perms path watcher
+      ansible.builtin.systemd:
+        name: tbot-perms.path
+        state: restarted
+        daemon_reload: true

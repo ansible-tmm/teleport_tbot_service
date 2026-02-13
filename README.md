@@ -104,8 +104,9 @@ ansible-playbook install_tbot.yml \
    - Request impersonation of the access role (`aap-ssh`)
    - Write SSH identity to output directory
 7. **Creates systemd service** that runs continuously
-8. **Verifies** service is running and certificates are generated
-9. **Cleans up** admin session for security
+8. **Sets up automated EE access**: persistent SELinux fcontext + systemd path watcher
+9. **Verifies** service is running and certificates are generated
+10. **Cleans up** admin session for security
 
 ## How It Works (Teleport RBAC Model)
 
@@ -123,6 +124,23 @@ When tbot runs:
 - The join token is single-use for initial enrollment only
 - After enrollment, tbot uses its stored identity to renew certificates automatically
 - No additional tokens or credentials are needed after initial setup
+
+### Automated Permission Watcher
+
+tbot writes output files (identity, ssh_config, etc.) with `0600` permissions on every renewal cycle (~20 min). Since AAP Execution Environments access these files via bind mount, they need to be world-readable.
+
+The playbook creates a **systemd path watcher** (`tbot-perms.path` + `tbot-perms.service`) that:
+1. Monitors the output directory for changes
+2. Automatically runs `chmod -R o+rX` to make files readable
+3. Runs `restorecon` to ensure SELinux `container_file_t` labels are applied
+
+This means permissions are fixed automatically within seconds of every tbot renewal -- no cron jobs or manual intervention needed.
+
+```bash
+# Check watcher status
+sudo systemctl status tbot-perms.path
+sudo systemctl status tbot-perms.service
+```
 
 ## Verification
 
@@ -196,27 +214,31 @@ Look for `Task succeeded. Waiting interval task:output-renewal` to confirm it's 
 
 #### 2. AAP Job: "Identity file not found" or "Permission denied"
 
-**Cause:** Mount not configured or permission/SELinux issues.
+**Cause:** Mount not configured in AAP, or first run before permission watcher triggers.
 
 **Fix:**
 
-On the execution node:
-```bash
-# Set correct permissions (run after initial playbook execution)
-sudo chmod 755 /var/lib/teleport-bot/aap-bot
-sudo chmod 755 /var/lib/teleport-bot/aap-bot/out
-sudo chmod 644 /var/lib/teleport-bot/aap-bot/out/identity
+The playbook now **automatically** handles permissions and SELinux:
+- Directories are created with `0755` (world-traversable)
+- SELinux `container_file_t` fcontext is set persistently via `semanage`
+- A `tbot-perms.path` systemd watcher auto-fixes file permissions every time tbot renews certificates (~20 min)
 
-# Set SELinux context for container access
-sudo chcon -R -t container_file_t /var/lib/teleport-bot/aap-bot/out/
-```
-
-In AAP:
+**In AAP** (one-time setup):
 1. Go to **Settings → Automation Execution → Job**
 2. Add to **Paths to expose to isolated jobs**:
    ```
    /var/lib/teleport-bot/aap-bot:/var/lib/teleport-bot/aap-bot:ro
    ```
+
+**If you still get permission errors** after the playbook has run, verify the watcher is active:
+```bash
+sudo systemctl status tbot-perms.path
+sudo systemctl status tbot-perms.service  # Shows last trigger time
+
+# Manual fix if needed
+sudo chmod -R o+rX /var/lib/teleport-bot/aap-bot/out/
+sudo restorecon -R /var/lib/teleport-bot/aap-bot/out/
+```
 
 #### 3. Certificates Not Renewing
 

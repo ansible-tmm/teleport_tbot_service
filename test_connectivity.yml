@@ -19,7 +19,7 @@
       run_once: true
     
     - name: DEBUG - Show ssh_args specifically
-      ansible.builtin.command: ansible-config dump | grep -i ssh_args
+      ansible.builtin.shell: ansible-config dump | grep -i ssh_args
       register: ssh_args_dump
       delegate_to: localhost
       run_once: true
