@@ -32,6 +32,16 @@ If your AAP runs on OpenShift or Kubernetes, Teleport provides an official guide
 
 If your AAP uses the **containerized installer on RHEL** (not OpenShift), your execution nodes are bare-metal or VM hosts running podman-based Execution Environments. There is no Kubernetes sidecar option. Instead, this repository installs `tbot` as a **systemd service** directly on the RHEL execution node, continuously renewing SSH certificates to a local directory that gets bind-mounted into EE containers at job runtime.
 
+AAP on RHEL uses **automation mesh** to distribute work across multiple execution nodes. Automation mesh is a peer-to-peer overlay network that connects the AAP controller to remote execution nodes over encrypted channels, allowing jobs to run closer to the infrastructure they manage. Each execution node is a standalone RHEL host that runs Execution Environments as podman containers.
+
+![AAP on RHEL architecture - tbot runs as a daemon on each execution node](images/aap-rhel-architecture.png)
+
+In this architecture, each execution node runs its own `tbot` systemd service (shown by the Teleport logo on each host). tbot continuously renews SSH certificates on the local filesystem. When AAP dispatches a job to an execution node, the EE container gets the certificates via a read-only bind mount, and uses them to SSH through the Teleport proxy to the target Linux servers. This playbook automates the tbot setup across all your execution nodes.
+
+The bind mount is configured in AAP under **Settings → Automation Execution → Job → Paths to expose to isolated jobs**:
+
+![AAP Job Settings - Paths to expose to isolated jobs with tbot directory](images/aap-paths-to-expose.png)
+
 ---
 
 ## Purpose
