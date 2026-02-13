@@ -6,6 +6,8 @@
 
 **Can Ansible use Teleport?** Yes. Ansible connects to hosts over SSH, and Teleport speaks standard SSH protocol. Once Teleport's SSH configuration is provided to Ansible, your existing playbooks work without any modification. No special Ansible modules or plugins are required -- Ansible simply uses Teleport as its SSH transport layer.
 
+![Ansible Automation Platform connects through Teleport to reach Linux servers](images/aap-teleport-diagram.png)
+
 ---
 
 ## Which Guide Do I Follow?
@@ -68,7 +70,7 @@ spec:
         - aap-ssh
 ```
 
-**Why this matters:** 
+**Why this matters:**
 - **Bot role** (`bot-aap-bot`): Bot's authentication identity (auto-created by playbook)
 - **Access role** (`aap-ssh`): SSH permissions the bot impersonates (must be pre-created)
 - The bot authenticates as itself, then requests to impersonate the access role to get SSH certificates
@@ -285,7 +287,7 @@ A successful run means:
 
 #### 1. Error: "user 'bot-aap-bot' has requested role impersonation for ['aap-ssh']"
 
-**Symptom:** 
+**Symptom:**
 - tbot service is running but logs show repeated failures
 - Identity file timestamp is old and not being updated
 - SSH attempts fail with "cert has expired"
