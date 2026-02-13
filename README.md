@@ -178,24 +178,6 @@ ansible-playbook install_tbot.yml \
 
 ---
 
-### `test_connectivity.yml` -- Simple Connectivity Test
-
-**Purpose:** Lightweight playbook that runs `ansible.builtin.ping` against Teleport-protected hosts. Use this to verify end-to-end SSH connectivity from an AAP Execution Environment through Teleport. Also includes debug tasks that show the active Ansible config and whether the Teleport `ssh_config` file is accessible from inside the EE.
-
-**Usage in AAP:**
-- **Playbook:** `test_connectivity.yml`
-- **Inventory:** Your Teleport inventory (with `ansible_ssh_common_args` set -- see [Testing & Verification](#testing--verification))
-- **Execution Environment:** `quay.io/acme_corp/teleport-ssh-ee`
-- **Hosts:** `all`
-
-**Usage from CLI:**
-
-```bash
-ansible-playbook test_connectivity.yml -i inventory.ini
-```
-
----
-
 ### `test_teleport_access.yml` -- Detailed EE and SSH Verification
 
 **Purpose:** Comprehensive test playbook that runs on `localhost` inside the Execution Environment. It verifies two things separately: (1) that the EE can access the tbot identity file via the bind mount, and (2) that SSH connectivity to a target host works through Teleport using `tsh`. Includes extensive debug output for troubleshooting mount visibility, file permissions, and container environment details.
@@ -243,6 +225,24 @@ sudo /usr/local/bin/tsh \
   --proxy=sean-test.teleport.sh:443 \
   ssh ec2-user@rhel01-nostromo.demoredhat.com
 ```
+
+### `test_connectivity.yml` -- Simple Connectivity Test
+
+**Purpose:** Lightweight playbook that runs `ansible.builtin.ping` against Teleport-protected hosts. Use this to verify end-to-end SSH connectivity from an AAP Execution Environment through Teleport. Also includes debug tasks that show the active Ansible config and whether the Teleport `ssh_config` file is accessible from inside the EE.
+
+**Usage in AAP:**
+- **Playbook:** `test_connectivity.yml`
+- **Inventory:** Your Teleport inventory (with `ansible_ssh_common_args` set -- see [Testing & Verification](#testing--verification))
+- **Execution Environment:** `quay.io/acme_corp/teleport-ssh-ee`
+- **Hosts:** `all`
+
+**Usage from CLI:**
+
+```bash
+ansible-playbook test_connectivity.yml -i inventory.ini
+```
+
+---
 
 ### From AAP
 
