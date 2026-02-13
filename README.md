@@ -343,3 +343,25 @@ Common causes:
 - Network connectivity to Teleport proxy
 - RBAC permissions changed in Teleport
 - tbot service crashed (check systemd restart counter)
+
+## Where to Get Help
+
+**Open an issue** on this repository if you run into problems, have questions, or want to suggest improvements:
+
+- [GitHub Issues](https://github.com/IPvSean/teleport_tbot_service/issues)
+
+**Join the Ansible community forum** at [forum.ansible.com](https://forum.ansible.com/). The forum is the central hub for the Ansible community -- it's where users, contributors, and developers come together to ask questions, share knowledge, and help each other. Whether you're troubleshooting a playbook, looking for best practices, or want to connect with other automation engineers, the forum is the best place to start. It's friendly, active, and welcoming to all skill levels.
+
+- [Get Help](https://forum.ansible.com/c/help/6) -- post questions and get answers from the community
+- [Social Spaces](https://forum.ansible.com/c/social/7) -- connect with fellow automation enthusiasts
+- [News & Announcements](https://forum.ansible.com/c/news/5) -- stay up to date with the Ansible ecosystem
+
+## Code of Conduct
+
+This project follows the [Ansible Community Code of Conduct](https://docs.ansible.com/ansible/devel/community/code_of_conduct.html). Please read and familiarize yourself with this document. See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for details.
+
+## Licensing
+
+GNU General Public License v3.0 or later.
+
+See [LICENSE](LICENSE) to see the full text.
