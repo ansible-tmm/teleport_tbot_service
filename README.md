@@ -44,10 +44,6 @@ The bind mount is configured in AAP under **Settings → Automation Execution �
 
 ---
 
-## Purpose
-
-Deploy Teleport tbot as a systemd service on RHEL9 execution nodes. tbot continuously maintains short-lived SSH certificates that AAP Execution Environments can use to SSH into Teleport-protected hosts without storing static SSH keys or passwords.
-
 ## Prerequisites
 
 ### 1. Teleport Administrator Must Complete (One-Time Setup)
@@ -151,7 +147,96 @@ ansible-playbook install_tbot.yml \
 9. **Verifies** service is running and certificates are generated
 10. **Cleans up** admin session for security
 
-## How It Works (Teleport RBAC Model)
+## Testing & Verification
+
+### On the Execution Node
+
+After running `install_tbot.yml`, verify directly on the RHEL host:
+
+```bash
+# Check tbot service status
+sudo systemctl status tbot
+
+# View logs
+sudo journalctl -u tbot -n 50 --no-pager
+
+# Verify certificate exists and is fresh
+sudo ls -la /var/lib/teleport-bot/aap-bot/out/identity
+
+# Test SSH manually
+sudo /usr/local/bin/tsh \
+  --identity=/var/lib/teleport-bot/aap-bot/out/identity \
+  --proxy=sean-test.teleport.sh:443 \
+  ssh ec2-user@rhel01-nostromo.demoredhat.com
+```
+
+### From AAP
+
+#### Step 1: Create a Teleport Inventory in AAP
+
+Create a **separate inventory** in AAP for Teleport-protected hosts. This inventory is different from the one used by `install_tbot.yml` (which targets execution nodes via normal SSH).
+
+On the **inventory level**, set the `ansible_ssh_common_args` variable so all hosts in this inventory route SSH through the Teleport-generated `ssh_config`:
+
+```yaml
+ansible_ssh_common_args: '-F /var/lib/teleport-bot/aap-bot/out/sean-test.teleport.sh.ssh_config'
+```
+
+![AAP Teleport Inventory - ansible_ssh_common_args set at inventory level](images/aap-teleport-inventory.png)
+
+> **Why inventory and not ansible.cfg?** This project contains both `install_tbot.yml` (normal SSH to execution nodes) and test playbooks (Teleport SSH to protected hosts). Putting `ssh_args` in `ansible.cfg` would break the install playbook. By using an inventory variable, only Teleport hosts get the Teleport SSH config. See `inventory.ini` for a file-based example.
+
+#### Step 2: Add Hosts Using the Teleport Hostname Format
+
+Teleport hosts use a special naming convention. The host name in your AAP inventory is **not** the regular DNS name -- it is the real hostname **plus** the Teleport cluster domain appended to it:
+
+```
+{real-hostname}.{teleport-cluster-domain}
+```
+
+For example, if:
+- Real DNS name: `rhel01-nostromo.demoredhat.com`
+- Teleport cluster: `sean-test.teleport.sh`
+
+Then the AAP host name must be:
+```
+rhel01-nostromo.demoredhat.com.sean-test.teleport.sh
+```
+
+Set `ansible_user` on the host to the SSH login user (e.g., `ec2-user`):
+
+![AAP Teleport Host - hostname format and ansible_user variable](images/aap-teleport-host.png)
+
+#### Step 3: Create Job Templates
+
+Create Job Templates in AAP with:
+- **Playbook**: `test_connectivity.yml` (simple ping test) or `test_teleport_access.yml` (detailed EE + SSH verification)
+- **Inventory**: Your Teleport inventory (created above)
+- **Execution Environment**: `quay.io/acme_corp/teleport-ssh-ee`
+
+#### Step 4: Run and Verify
+
+Launch the job. `test_connectivity.yml` will:
+1. Show the active Ansible config and `ssh_args` being used
+2. Check that the Teleport `ssh_config` file is accessible from inside the EE
+3. Run `ansible.builtin.ping` against each host through Teleport
+
+For a more thorough test, `test_teleport_access.yml` checks identity file access and SSH connectivity separately:
+
+```
+✅ TEST 1: Identity file is accessible
+✅ TEST 2: SSH connectivity via Teleport works
+🎉 ALL TESTS PASSED!
+```
+
+A successful run means:
+- The EE can read the bind-mounted tbot certificates
+- SSH is routing through the Teleport proxy via the generated `ssh_config`
+- The Teleport host is reachable and accepting the bot's SSH certificate
+
+## How It Works
+
+### Teleport RBAC Model
 
 When tbot runs:
 
@@ -184,112 +269,6 @@ This means permissions are fixed automatically within seconds of every tbot rene
 sudo systemctl status tbot-perms.path
 sudo systemctl status tbot-perms.service
 ```
-
-## Verification
-
-After running the playbook and configuring AAP mounts:
-
-### On the Execution Node
-
-```bash
-# Check tbot service status
-sudo systemctl status tbot
-
-# View logs
-sudo journalctl -u tbot -n 50 --no-pager
-
-# Verify certificate exists and is fresh
-sudo ls -la /var/lib/teleport-bot/aap-bot/out/identity
-
-# Test SSH manually
-sudo /usr/local/bin/tsh \
-  --identity=/var/lib/teleport-bot/aap-bot/out/identity \
-  --proxy=sean-test.teleport.sh:443 \
-  ssh ec2-user@rhel01-nostromo.demoredhat.com
-```
-
-### In AAP
-
-**Important:** The `ansible.cfg` does NOT contain `ssh_args` because this project has both
-install playbooks (normal SSH) and test playbooks (Teleport SSH). Instead, set
-`ansible_ssh_common_args` as a **host or group variable** in your AAP inventory:
-
-```
-ansible_ssh_common_args=-F /var/lib/teleport-bot/aap-bot/out/sean-test.teleport.sh.ssh_config
-```
-
-This ensures only Teleport-connected hosts route through the Teleport proxy, while
-`install_tbot.yml` (which targets execution nodes via normal SSH) is not affected.
-
-See `inventory.ini` for an example using `[teleport_hosts:vars]`.
-
-Run the detailed test playbook as a Job Template:
-```bash
-ansible-playbook test_teleport_access.yml
-```
-
-Expected output:
-```
-✅ TEST 1: Identity file is accessible
-✅ TEST 2: SSH connectivity via Teleport works
-🎉 ALL TESTS PASSED!
-```
-
-## Testing Connectivity from AAP
-
-This section walks through using `test_connectivity.yml` to verify end-to-end SSH connectivity from AAP through Teleport to a protected host.
-
-### Step 1: Create a Teleport Inventory in AAP
-
-Create a **separate inventory** in AAP for Teleport-protected hosts. This inventory is different from the one used by `install_tbot.yml` (which targets execution nodes via normal SSH).
-
-On the **inventory level**, set the `ansible_ssh_common_args` variable so all hosts in this inventory route SSH through the Teleport-generated `ssh_config`:
-
-```yaml
-ansible_ssh_common_args: '-F /var/lib/teleport-bot/aap-bot/out/sean-test.teleport.sh.ssh_config'
-```
-
-![AAP Teleport Inventory - ansible_ssh_common_args set at inventory level](images/aap-teleport-inventory.png)
-
-### Step 2: Add Hosts Using the Teleport Hostname Format
-
-Teleport hosts use a special naming convention. The host name in your AAP inventory is **not** the regular DNS name -- it is the real hostname **plus** the Teleport cluster domain appended to it:
-
-```
-{real-hostname}.{teleport-cluster-domain}
-```
-
-For example, if:
-- Real DNS name: `rhel01-nostromo.demoredhat.com`
-- Teleport cluster: `sean-test.teleport.sh`
-
-Then the AAP host name must be:
-```
-rhel01-nostromo.demoredhat.com.sean-test.teleport.sh
-```
-
-Set `ansible_user` on the host to the SSH login user (e.g., `ec2-user`):
-
-![AAP Teleport Host - hostname format and ansible_user variable](images/aap-teleport-host.png)
-
-### Step 3: Create a Job Template for test_connectivity.yml
-
-Create a Job Template in AAP with:
-- **Playbook**: `test_connectivity.yml`
-- **Inventory**: Your Teleport inventory (created above)
-- **Execution Environment**: `quay.io/acme_corp/teleport-ssh-ee`
-
-### Step 4: Run and Verify
-
-Launch the job. The playbook will:
-1. Show the active Ansible config and `ssh_args` being used
-2. Check that the Teleport `ssh_config` file is accessible from inside the EE
-3. Run `ansible.builtin.ping` against each host through Teleport
-
-A successful run means:
-- The EE can read the bind-mounted tbot certificates
-- SSH is routing through the Teleport proxy via the generated `ssh_config`
-- The Teleport host is reachable and accepting the bot's SSH certificate
 
 ## Troubleshooting
 
