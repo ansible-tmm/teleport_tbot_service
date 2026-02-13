@@ -51,10 +51,23 @@
       register: out_dir
       changed_when: false
       failed_when: false
-
+    
     - name: "DEBUG: Display out directory"
       ansible.builtin.debug:
         msg: "{{ out_dir.stdout_lines }}"
+    
+    - name: "DEBUG: Check if Teleport ssh_config exists"
+      ansible.builtin.stat:
+        path: /var/lib/teleport-bot/aap-bot/out/sean-test.teleport.sh.ssh_config
+      register: teleport_ssh_config
+      failed_when: false
+    
+    - name: "DEBUG: Display ssh_config status"
+      ansible.builtin.debug:
+        msg: |
+          SSH Config File: /var/lib/teleport-bot/aap-bot/out/sean-test.teleport.sh.ssh_config
+          Exists: {{ teleport_ssh_config.stat.exists | default('unknown') }}
+          Readable: {{ teleport_ssh_config.stat.readable | default('unknown') }}
 
     - name: "DEBUG: Check mounts"
       ansible.builtin.command: mount

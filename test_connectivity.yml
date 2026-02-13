@@ -5,6 +5,61 @@
   
   tasks:
     
+    - name: DEBUG - Show ansible config file in use
+      ansible.builtin.command: ansible-config dump --only-changed
+      register: ansible_config_dump
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+    
+    - name: DEBUG - Display active config
+      ansible.builtin.debug:
+        msg: "{{ ansible_config_dump.stdout_lines }}"
+      delegate_to: localhost
+      run_once: true
+    
+    - name: DEBUG - Show ssh_args specifically
+      ansible.builtin.command: ansible-config dump | grep -i ssh_args
+      register: ssh_args_dump
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+      failed_when: false
+    
+    - name: DEBUG - Display ssh_args
+      ansible.builtin.debug:
+        msg: "{{ ssh_args_dump.stdout_lines }}"
+      delegate_to: localhost
+      run_once: true
+    
+    - name: DEBUG - Check if Teleport ssh_config exists and is readable
+      ansible.builtin.command: ls -la /var/lib/teleport-bot/aap-bot/out/sean-test.teleport.sh.ssh_config
+      register: ssh_config_ls
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+      failed_when: false
+    
+    - name: DEBUG - Display ssh_config file status
+      ansible.builtin.debug:
+        msg: "{{ ssh_config_ls.stdout_lines | default(['File not found']) }}"
+      delegate_to: localhost
+      run_once: true
+    
+    - name: DEBUG - Show contents of ssh_config if readable
+      ansible.builtin.command: cat /var/lib/teleport-bot/aap-bot/out/sean-test.teleport.sh.ssh_config
+      register: ssh_config_content
+      delegate_to: localhost
+      run_once: true
+      changed_when: false
+      failed_when: false
+    
+    - name: DEBUG - Display ssh_config contents
+      ansible.builtin.debug:
+        msg: "{{ ssh_config_content.stdout_lines | default(['Cannot read file']) }}"
+      delegate_to: localhost
+      run_once: true
+    
     - name: Test connectivity with ping
       ansible.builtin.ping:
       register: ping_result
