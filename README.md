@@ -167,6 +167,19 @@ sudo /usr/local/bin/tsh \
 
 ### In AAP
 
+**Important:** The `ansible.cfg` does NOT contain `ssh_args` because this project has both
+install playbooks (normal SSH) and test playbooks (Teleport SSH). Instead, set
+`ansible_ssh_common_args` as a **host or group variable** in your AAP inventory:
+
+```
+ansible_ssh_common_args=-F /var/lib/teleport-bot/aap-bot/out/sean-test.teleport.sh.ssh_config
+```
+
+This ensures only Teleport-connected hosts route through the Teleport proxy, while
+`install_tbot.yml` (which targets execution nodes via normal SSH) is not affected.
+
+See `inventory.ini` for an example using `[teleport_hosts:vars]`.
+
 Run the test playbook as a Job Template:
 ```bash
 ansible-playbook test_teleport_access.yml
