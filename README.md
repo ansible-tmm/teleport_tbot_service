@@ -1,5 +1,13 @@
 # Teleport tbot Service for Ansible Automation Platform
 
+## What is Teleport?
+
+[Teleport](https://goteleport.com/) is an identity-aware infrastructure access platform that replaces static SSH keys and passwords with short-lived certificates. Instead of distributing and managing SSH keys across your environment, Teleport issues certificates that automatically expire, providing secure access to Linux servers, Kubernetes clusters, databases, and more.
+
+**Can Ansible use Teleport?** Yes. Ansible connects to hosts over SSH, and Teleport speaks standard SSH protocol. Once Teleport's SSH configuration is provided to Ansible, your existing playbooks work without any modification. No special Ansible modules or plugins are required -- Ansible simply uses Teleport as its SSH transport layer.
+
+---
+
 ## Which Guide Do I Follow?
 
 There are three ways to integrate Teleport with Ansible, depending on your deployment model:
