@@ -8,6 +8,21 @@
 
 ![Ansible Automation Platform connects through Teleport to reach Linux servers](images/aap-teleport-diagram.png)
 
+## Table of Contents
+
+- [Which Guide Do I Follow?](#which-guide-do-i-follow)
+- [Prerequisites](#prerequisites)
+- [Playbooks](#playbooks)
+  - [install_tbot.yml -- Install and Configure tbot](#install_tbotyml----install-and-configure-tbot)
+  - [test_connectivity.yml -- Simple Connectivity Test](#test_connectivityyml----simple-connectivity-test)
+  - [test_teleport_access.yml -- Detailed EE and SSH Verification](#test_teleport_accessyml----detailed-ee-and-ssh-verification)
+- [Testing & Verification](#testing--verification)
+- [How It Works](#how-it-works)
+- [Troubleshooting](#troubleshooting)
+- [Where to Get Help](#where-to-get-help)
+- [Code of Conduct](#code-of-conduct)
+- [Licensing](#licensing)
+
 ---
 
 ## Which Guide Do I Follow?
@@ -98,7 +113,23 @@ Your EE must have:
 - Working EE image: `quay.io/acme_corp/teleport-ssh-ee`
 - EE build source: https://github.com/ansible-tmm/ee-builds/tree/main/teleport-ssh-ee
 
-## Usage
+## Playbooks
+
+This repository contains three playbooks, each with a distinct purpose:
+
+| Playbook | Purpose | Run From |
+|---|---|---|
+| `install_tbot.yml` | Install and configure tbot on execution nodes | AAP or CLI (targets execution nodes) |
+| `test_teleport_access.yml` | Detailed EE mount + SSH verification | AAP (runs on localhost in EE) |
+| `test_connectivity.yml` | Simple ping test through Teleport | AAP (targets Teleport-protected hosts) |
+
+---
+
+### `install_tbot.yml` -- Install and Configure tbot
+
+**Purpose:** One-time setup playbook that installs Teleport tbot as a systemd service on RHEL execution nodes. Run this against each execution node to enable Teleport SSH access from AAP jobs.
+
+**Usage:**
 
 ```bash
 ansible-playbook install_tbot.yml \
@@ -111,41 +142,84 @@ ansible-playbook install_tbot.yml \
   -e teleport_mfa_token=123456
 ```
 
-**Note:** The playbook will create the bot in Teleport automatically. After the first run, you must configure the bot role impersonation (see Prerequisites above).
+**Note:** The playbook creates the bot in Teleport automatically. After the first run, you must configure the bot role impersonation (see [Prerequisites](#prerequisites) above).
 
-## Required Extra Variables
+**Required Extra Variables:**
 
-- `teleport_admin_user`: Your Teleport admin username
-- `teleport_admin_password`: Your Teleport admin password (handled securely with no_log)
-- `teleport_mfa_token`: Your 6-digit MFA/TOTP code from authenticator app (handled securely with no_log)
+| Variable | Description |
+|---|---|
+| `teleport_admin_user` | Your Teleport admin username |
+| `teleport_admin_password` | Your Teleport admin password (handled securely with `no_log`) |
+| `teleport_mfa_token` | Your 6-digit MFA/TOTP code from authenticator app (handled securely with `no_log`) |
 
-## Optional Variables (with defaults)
+**Optional Variables (with defaults):**
 
-- `teleport_proxy_addr`: Teleport proxy address (default: `teleport.example.com:443`)
-- `teleport_bot_name`: Bot name for directory structure (default: `aap-bot`)
-- `teleport_access_role`: Role that bot impersonates for SSH access (default: `aap-ssh`)
-- `teleport_ca_pin`: CA pin for additional security (optional)
-- `teleport_version`: Version to install (default: `17.1.4`)
-- `teleport_arch`: Architecture (default: `amd64`)
+| Variable | Default | Description |
+|---|---|---|
+| `teleport_proxy_addr` | `teleport.example.com:443` | Teleport proxy address |
+| `teleport_bot_name` | `aap-bot` | Bot name for directory structure |
+| `teleport_access_role` | `aap-ssh` | Role that bot impersonates for SSH access |
+| `teleport_ca_pin` | *(none)* | CA pin for additional security |
+| `teleport_version` | `17.1.4` | Teleport version to install |
+| `teleport_arch` | `amd64` | Architecture |
 
-## What It Does
+**What it does:**
 
-1. **Installs Teleport binaries** (tbot, tsh, tctl) from CDN tarball
-2. **Creates system user/group** (`tbot:tbot`)
-3. **Sets up directory structure**:
-   - `/var/lib/teleport-bot/` (base)
-   - `/var/lib/teleport-bot/{bot_name}/data` (tbot state)
-   - `/var/lib/teleport-bot/{bot_name}/out` (SSH certificates)
-4. **Performs admin login** with username/password/MFA
-5. **Creates bot in Teleport** and generates join token automatically
-6. **Generates tbot.yaml** configured to:
-   - Authenticate as `bot-{bot_name}`
-   - Request impersonation of the access role (`aap-ssh`)
-   - Write SSH identity to output directory
-7. **Creates systemd service** that runs continuously
-8. **Sets up automated EE access**: persistent SELinux fcontext + systemd path watcher
-9. **Verifies** service is running and certificates are generated
-10. **Cleans up** admin session for security
+1. Installs Teleport binaries (tbot, tsh, tctl) from CDN tarball
+2. Creates system user/group (`tbot:tbot`)
+3. Sets up directory structure (`/var/lib/teleport-bot/{bot_name}/data` and `out`)
+4. Performs admin login with username/password/MFA
+5. Creates bot in Teleport and generates join token automatically
+6. Generates `tbot.yaml` configured to authenticate and request the access role
+7. Creates `tbot.service` systemd service that runs continuously
+8. Sets up automated EE access: persistent SELinux fcontext + systemd path watcher
+9. Verifies service is running and certificates are generated
+10. Cleans up admin session for security
+
+---
+
+### `test_connectivity.yml` -- Simple Connectivity Test
+
+**Purpose:** Lightweight playbook that runs `ansible.builtin.ping` against Teleport-protected hosts. Use this to verify end-to-end SSH connectivity from an AAP Execution Environment through Teleport. Also includes debug tasks that show the active Ansible config and whether the Teleport `ssh_config` file is accessible from inside the EE.
+
+**Usage in AAP:**
+- **Playbook:** `test_connectivity.yml`
+- **Inventory:** Your Teleport inventory (with `ansible_ssh_common_args` set -- see [Testing & Verification](#testing--verification))
+- **Execution Environment:** `quay.io/acme_corp/teleport-ssh-ee`
+- **Hosts:** `all`
+
+**Usage from CLI:**
+
+```bash
+ansible-playbook test_connectivity.yml -i inventory.ini
+```
+
+---
+
+### `test_teleport_access.yml` -- Detailed EE and SSH Verification
+
+**Purpose:** Comprehensive test playbook that runs on `localhost` inside the Execution Environment. It verifies two things separately: (1) that the EE can access the tbot identity file via the bind mount, and (2) that SSH connectivity to a target host works through Teleport using `tsh`. Includes extensive debug output for troubleshooting mount visibility, file permissions, and container environment details.
+
+**Usage in AAP:**
+- **Playbook:** `test_teleport_access.yml`
+- **Inventory:** localhost or any (runs locally in the EE)
+- **Execution Environment:** `quay.io/acme_corp/teleport-ssh-ee`
+
+**Extra Variables (optional):**
+
+| Variable | Default | Description |
+|---|---|---|
+| `test_target_host` | `rhel01-nostromo.demoredhat.com` | Host to test SSH connectivity against |
+| `teleport_proxy` | `sean-test.teleport.sh:443` | Teleport proxy address |
+| `identity_path` | `/var/lib/teleport-bot/aap-bot/out/identity` | Path to tbot identity file |
+
+**Expected output on success:**
+
+```
+✅ TEST 1: Identity file is accessible
+✅ TEST 2: SSH connectivity via Teleport works
+🎉 ALL TESTS PASSED!
+```
 
 ## Testing & Verification
 
@@ -207,29 +281,11 @@ Set `ansible_user` on the host to the SSH login user (e.g., `ec2-user`):
 
 ![AAP Teleport Host - hostname format and ansible_user variable](images/aap-teleport-host.png)
 
-#### Step 3: Create Job Templates
+#### Step 3: Create Job Templates and Run
 
-Create Job Templates in AAP with:
-- **Playbook**: `test_connectivity.yml` (simple ping test) or `test_teleport_access.yml` (detailed EE + SSH verification)
-- **Inventory**: Your Teleport inventory (created above)
-- **Execution Environment**: `quay.io/acme_corp/teleport-ssh-ee`
+Create a Job Template pointing to either test playbook (see [Playbooks](#playbooks) above for details on each), select your Teleport inventory and EE, then launch.
 
-#### Step 4: Run and Verify
-
-Launch the job. `test_connectivity.yml` will:
-1. Show the active Ansible config and `ssh_args` being used
-2. Check that the Teleport `ssh_config` file is accessible from inside the EE
-3. Run `ansible.builtin.ping` against each host through Teleport
-
-For a more thorough test, `test_teleport_access.yml` checks identity file access and SSH connectivity separately:
-
-```
-✅ TEST 1: Identity file is accessible
-✅ TEST 2: SSH connectivity via Teleport works
-🎉 ALL TESTS PASSED!
-```
-
-A successful run means:
+A successful run confirms:
 - The EE can read the bind-mounted tbot certificates
 - SSH is routing through the Teleport proxy via the generated `ssh_config`
 - The Teleport host is reachable and accepting the bot's SSH certificate
