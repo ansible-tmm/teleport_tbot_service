@@ -1,6 +1,28 @@
 # Teleport tbot Service for Ansible Automation Platform
 
-Ansible playbook to install and configure Teleport tbot (Machine ID) as a systemd service on RHEL9 execution nodes used by Ansible Automation Platform. This enables AAP Execution Environments to use short-lived SSH certificates for secure access to Teleport-protected hosts.
+## Which Guide Do I Follow?
+
+There are three ways to integrate Teleport with Ansible, depending on your deployment model:
+
+| # | Deployment Model | Guide |
+|---|---|---|
+| 1 | **Open Source Ansible (CLI)** | [Teleport + Ansible (CLI)](https://goteleport.com/docs/connect-your-client/third-party/ansible/) |
+| 2 | **Ansible Automation Platform on OpenShift / Kubernetes** | [Teleport Machine ID + Ansible AWX](https://goteleport.com/docs/machine-workload-identity/access-guides/ansible-awx/) |
+| 3 | **Ansible Automation Platform on RHEL (containerized installer)** | **This repository** |
+
+### Category 1: Open Source Ansible (CLI)
+
+If you are running Ansible from the command line (not AAP), follow Teleport's official guide. You log in with `tsh`, generate an SSH config with `tsh config`, and point Ansible at it. No systemd service or bind mounts needed.
+
+### Category 2: AAP on OpenShift / Kubernetes
+
+If your AAP runs on OpenShift or Kubernetes, Teleport provides an official guide that runs `tbot` as a sidecar container alongside your Execution Environment pods. This uses Kubernetes join tokens and does not require a persistent systemd service on the host.
+
+### Category 3: AAP on RHEL (containerized installer) -- This Repo
+
+If your AAP uses the **containerized installer on RHEL** (not OpenShift), your execution nodes are bare-metal or VM hosts running podman-based Execution Environments. There is no Kubernetes sidecar option. Instead, this repository installs `tbot` as a **systemd service** directly on the RHEL execution node, continuously renewing SSH certificates to a local directory that gets bind-mounted into EE containers at job runtime.
+
+---
 
 ## Purpose
 
@@ -57,7 +79,8 @@ Your EE must have:
 - `tsh` binary installed (e.g., `/usr/local/bin/tsh`)
 - Mount point configured in AAP for the certificate directory
 
-Example EE setup: https://github.com/ansible-tmm/ee-builds/tree/main/teleport-ssh-ee
+- Working EE image: `quay.io/acme_corp/teleport-ssh-ee`
+- EE build source: https://github.com/ansible-tmm/ee-builds/tree/main/teleport-ssh-ee
 
 ## Usage
 
@@ -180,7 +203,7 @@ This ensures only Teleport-connected hosts route through the Teleport proxy, whi
 
 See `inventory.ini` for an example using `[teleport_hosts:vars]`.
 
-Run the test playbook as a Job Template:
+Run the detailed test playbook as a Job Template:
 ```bash
 ansible-playbook test_teleport_access.yml
 ```
@@ -191,6 +214,62 @@ Expected output:
 ✅ TEST 2: SSH connectivity via Teleport works
 🎉 ALL TESTS PASSED!
 ```
+
+## Testing Connectivity from AAP
+
+This section walks through using `test_connectivity.yml` to verify end-to-end SSH connectivity from AAP through Teleport to a protected host.
+
+### Step 1: Create a Teleport Inventory in AAP
+
+Create a **separate inventory** in AAP for Teleport-protected hosts. This inventory is different from the one used by `install_tbot.yml` (which targets execution nodes via normal SSH).
+
+On the **inventory level**, set the `ansible_ssh_common_args` variable so all hosts in this inventory route SSH through the Teleport-generated `ssh_config`:
+
+```yaml
+ansible_ssh_common_args: '-F /var/lib/teleport-bot/aap-bot/out/sean-test.teleport.sh.ssh_config'
+```
+
+![AAP Teleport Inventory - ansible_ssh_common_args set at inventory level](images/aap-teleport-inventory.png)
+
+### Step 2: Add Hosts Using the Teleport Hostname Format
+
+Teleport hosts use a special naming convention. The host name in your AAP inventory is **not** the regular DNS name -- it is the real hostname **plus** the Teleport cluster domain appended to it:
+
+```
+{real-hostname}.{teleport-cluster-domain}
+```
+
+For example, if:
+- Real DNS name: `rhel01-nostromo.demoredhat.com`
+- Teleport cluster: `sean-test.teleport.sh`
+
+Then the AAP host name must be:
+```
+rhel01-nostromo.demoredhat.com.sean-test.teleport.sh
+```
+
+Set `ansible_user` on the host to the SSH login user (e.g., `ec2-user`):
+
+![AAP Teleport Host - hostname format and ansible_user variable](images/aap-teleport-host.png)
+
+### Step 3: Create a Job Template for test_connectivity.yml
+
+Create a Job Template in AAP with:
+- **Playbook**: `test_connectivity.yml`
+- **Inventory**: Your Teleport inventory (created above)
+- **Execution Environment**: `quay.io/acme_corp/teleport-ssh-ee`
+
+### Step 4: Run and Verify
+
+Launch the job. The playbook will:
+1. Show the active Ansible config and `ssh_args` being used
+2. Check that the Teleport `ssh_config` file is accessible from inside the EE
+3. Run `ansible.builtin.ping` against each host through Teleport
+
+A successful run means:
+- The EE can read the bind-mounted tbot certificates
+- SSH is routing through the Teleport proxy via the generated `ssh_config`
+- The Teleport host is reachable and accepting the bot's SSH certificate
 
 ## Troubleshooting
 
