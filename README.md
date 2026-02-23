@@ -10,7 +10,7 @@
 
 ## Table of Contents
 
-- [Which Guide Do I Follow?](#which-guide-do-i-follow)
+- [Ansible Automation Platform on RHEL](#ansible-automation-platform-on-rhel)
 - [Prerequisites](#prerequisites)
 - [Playbooks](#playbooks)
   - [install_tbot.yml -- Install and Configure tbot](#install_tbotyml----install-and-configure-tbot)
@@ -25,27 +25,11 @@
 
 ---
 
-## Which Guide Do I Follow?
+## Ansible Automation Platform on RHEL
 
-There are three ways to integrate Teleport with Ansible, depending on your deployment model:
+This repository is for [Red Hat Ansible Automation Platform](https://www.redhat.com/en/technologies/management/ansible) deployed on RHEL using the **containerized installer**. AAP provides automation mesh, execution environments, role-based access control, and centralized job management that organizations need to run Ansible at scale.
 
-| # | Deployment Model | Guide |
-|---|---|---|
-| 1 | **Open Source Ansible (CLI)** | [Teleport + Ansible (CLI)](https://goteleport.com/docs/connect-your-client/third-party/ansible/) |
-| 2 | **Ansible Automation Platform on OpenShift / Kubernetes** | [Teleport Machine ID + Ansible AWX](https://goteleport.com/docs/machine-workload-identity/access-guides/ansible-awx/) |
-| 3 | **Ansible Automation Platform on RHEL (containerized installer)** | **This repository** |
-
-### Category 1: Open Source Ansible (CLI)
-
-If you are running Ansible from the command line (not AAP), follow Teleport's official guide. You log in with `tsh`, generate an SSH config with `tsh config`, and point Ansible at it. No systemd service or bind mounts needed.
-
-### Category 2: AAP on OpenShift / Kubernetes
-
-If your AAP runs on OpenShift or Kubernetes, Teleport provides an official guide that runs `tbot` as a sidecar container alongside your Execution Environment pods. This uses Kubernetes join tokens and does not require a persistent systemd service on the host.
-
-### Category 3: AAP on RHEL (containerized installer) -- This Repo
-
-If your AAP uses the **containerized installer on RHEL** (not OpenShift), your execution nodes are bare-metal or VM hosts running podman-based Execution Environments. There is no Kubernetes sidecar option. Instead, this repository installs `tbot` as a **systemd service** directly on the RHEL execution node, continuously renewing SSH certificates to a local directory that gets bind-mounted into EE containers at job runtime.
+In this deployment model, your execution nodes are bare-metal or VM hosts running RHEL, and Execution Environments run as podman containers. This repository installs `tbot` as a **systemd service** directly on each execution node, continuously renewing SSH certificates to a local directory that gets bind-mounted into EE containers at job runtime.
 
 AAP on RHEL uses **automation mesh** to distribute work across multiple execution nodes. Automation mesh is a peer-to-peer overlay network that connects the AAP controller to remote execution nodes over encrypted channels, allowing jobs to run closer to the infrastructure they manage. Each execution node is a standalone RHEL host that runs Execution Environments as podman containers.
 
