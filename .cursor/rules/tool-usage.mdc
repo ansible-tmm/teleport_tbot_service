@@ -1,0 +1,31 @@
+---
+description: Use native Cursor tools for all file operations, never shell commands
+alwaysApply: true
+---
+
+# Tool Usage Rules
+
+## File Operations -- Always Use Native Tools
+
+- **Read files**: Use the `Read` tool. Never use `cat`, `head`, `tail`, `less`, or `more`.
+- **Edit files**: Use `StrReplace` for targeted edits or `Write` for full file creation. Never use `sed`, `awk`, `perl -pi`, or `echo >`.
+- **Search files**: Use `Grep` for text search, `Glob` for finding files by name, `SemanticSearch` for meaning-based search. Never use `find`, `grep`, or `rg` via the Shell tool.
+- **Inspect encoding**: Never use `xxd`, `od`, or `hexdump`. If `Read` or `StrReplace` fails, re-read the file and adjust the match string.
+
+## Shell Tool -- Only For Actual Shell Operations
+
+Use the Shell tool exclusively for:
+- Git commands (`git status`, `git commit`, etc.)
+- Package management (`pip install`, `npm install`, etc.)
+- Running builds, tests, or dev servers
+- Copying/moving files between directories (`cp`, `mv`, `mkdir`)
+- Downloading files (`curl`, `wget`)
+- Checking process status
+
+## When StrReplace Fails
+
+If `StrReplace` can't find the target string:
+1. Re-read the file with the `Read` tool to see the actual current content
+2. Copy the exact text from the Read output for the replacement
+3. Try again with the corrected string
+4. Do NOT fall back to `sed` or other shell commands

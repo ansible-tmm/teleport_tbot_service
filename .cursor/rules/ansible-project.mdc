@@ -1,0 +1,27 @@
+---
+description: Ansible project conventions for this repository
+globs: "**/*.yml"
+alwaysApply: false
+---
+
+# Ansible Project Conventions
+
+## Playbook Style
+
+- Use fully qualified collection names (e.g., `ansible.builtin.debug`, not `debug`)
+- Use `ansible.builtin.shell` when pipes (`|`) are needed, `ansible.builtin.command` otherwise
+- Mark sensitive tasks with `no_log: true` only in production; remove during troubleshooting
+- Always set `changed_when` and `failed_when` for command/shell tasks
+
+## Target Environment
+
+- RHEL9 execution nodes with SELinux enforcing
+- AAP containerized installer (not OpenShift)
+- Execution Environments run as podman containers
+- Teleport v17 configuration syntax (`version: v2`, `outputs` not `destinations`)
+
+## Variables
+
+- Teleport-specific variables are prefixed with `teleport_`
+- System/directory variables are prefixed with `tbot_`
+- Sensitive variables (`teleport_admin_password`, `teleport_mfa_token`) must use `no_log: true`
